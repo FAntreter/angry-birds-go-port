@@ -101,17 +101,25 @@ extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*) {
 #else
     LOGI("absw ARM32 bridge starting (host x86_64)");
 #endif
+    bridge_log("JNI_OnLoad entered; initializing guest runtime");
     arena::init();
+    bridge_log("arena initialized");
     cpu::init();
+    bridge_log("Dynarmic CPU initialized");
     hle::init();
+    bridge_log("Android HLE initialized");
     jni::init(vm, env);
+    bridge_log("JNI bridge initialized");
 
+    bridge_log("loading embedded guest runtime");
     elf::Module* rt = elf::load("libabsw_rt.so", kGuestRt, sizeof kGuestRt);
     elf::run_init(rt);
 
     std::unordered_map<std::string, elf::Module*> loaded;
     std::unordered_set<std::string> active;
+    bridge_log("loading Angry Birds Go engine dependency tree");
     elf::Module* game = load_guest_tree("libABK.so", kGuestLibFile, loaded, active);
+    bridge_log("game engine ELF loaded; invoking guest SDK lifecycle");
 
     // Android calls JNI_OnLoad for a library loaded by Java. The guest SDK is
     // brought in as a DT_NEEDED dependency instead, so invoke its lifecycle hook
@@ -152,14 +160,17 @@ extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*) {
         fatal("libadcolony.so is missing JNI_OnLoad");
     }
 
+    bridge_log("AdColony guest library initialized; binding game JNI exports");
     int bound = jni::bind_exports(env);
     LOGI("bound %d native methods", bound);
 
+    bridge_log("bound %d native methods; invoking game JNI_OnLoad", bound);
     jint version = JNI_VERSION_1_6;
     if (auto it = game->exports.find("JNI_OnLoad"); it != game->exports.end()) {
         jni::Scope scope(env);
         version = static_cast<jint>(cpu::call(it->second, {jni::guest_vm(), 0}));
         LOGI("guest JNI_OnLoad returned 0x%x", version);
     }
+    bridge_log("bridge startup completed; JNI version 0x%x", version);
     return version;
 }

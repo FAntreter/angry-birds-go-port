@@ -4,20 +4,37 @@
 #include <atomic>
 #include <cstdarg>
 #include <cstdlib>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
 
 #include "elf32.h"
 
+namespace {
+constexpr const char* kCrashLog = "/sdcard/Android/data/com.rovio.angrybirdsgo/files/abgo_bridge_crash.txt";
+void append_crash_line(const char* line) {
+    mkdir("/sdcard/Android", 0770);
+    mkdir("/sdcard/Android/data", 0770);
+    mkdir("/sdcard/Android/data/com.rovio.angrybirdsgo", 0770);
+    mkdir("/sdcard/Android/data/com.rovio.angrybirdsgo/files", 0770);
+    int fd = open(kCrashLog, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0660);
+    if (fd < 0) return;
+    size_t n = strlen(line);
+    while (n) { ssize_t w = write(fd, line, n); if (w <= 0) break; line += w; n -= static_cast<size_t>(w); }
+    write(fd, "\n", 1); fsync(fd); close(fd);
+}
+}
+void bridge_log(const char* fmt, ...) {
+    char buf[1024]; va_list ap; va_start(ap, fmt); vsnprintf(buf, sizeof buf, fmt, ap); va_end(ap);
+    __android_log_print(ANDROID_LOG_INFO, ABSW_TAG, "%s", buf); append_crash_line(buf);
+}
 void fatal(const char* fmt, ...) {
-    char buf[1024];
-    va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(buf, sizeof buf, fmt, ap);
-    va_end(ap);
+    char buf[1024]; va_list ap; va_start(ap, fmt); vsnprintf(buf, sizeof buf, fmt, ap); va_end(ap);
     __android_log_print(ANDROID_LOG_FATAL, ABSW_TAG, "FATAL: %s", buf);
-    abort();
+    char line[1100]; snprintf(line, sizeof line, "FATAL: %s", buf); append_crash_line(line); abort();
 }
 
 namespace hle {

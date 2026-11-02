@@ -626,6 +626,40 @@ std::string class_name(JNIEnv* e, jclass cls) {
     return n;
 }
 
+std::string jni_encode(const char* first, const char* last) {
+    static constexpr char hex[] = "0123456789abcdef";
+    std::string out;
+    for (const char* p = first; p != last; ++p) {
+        const unsigned char ch = static_cast<unsigned char>(*p);
+        if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+            (ch >= '0' && ch <= '9')) {
+            out.push_back(static_cast<char>(ch));
+        } else {
+            switch (ch) {
+            case '/': out.push_back('_'); break;
+            case '_': out += "_1"; break;
+            case ';': out += "_2"; break;
+            case '[': out += "_3"; break;
+            default:
+                out += "_0";
+                out.push_back(hex[(ch >> 12) & 0xF]);
+                out.push_back(hex[(ch >> 8) & 0xF]);
+                out.push_back(hex[(ch >> 4) & 0xF]);
+                out.push_back(hex[ch & 0xF]);
+                break;
+            }
+        }
+    }
+    return out;
+}
+
+std::string jni_long_name(const NativeSlot& native) {
+    const char* open = strchr(native.sig, '(');
+    const char* close = open ? strchr(open + 1, ')') : nullptr;
+    if (!open || !close) return {};
+    return std::string(native.mangled) + "__" + jni_encode(open + 1, close);
+}
+
 int find_native(const std::string& cls, const char* name, const char* sig) {
     for (size_t i = 0; i < kNumNatives; ++i)
         if (cls == kNatives[i].cls && !strcmp(name, kNatives[i].name) && !strcmp(sig, kNatives[i].sig))
@@ -727,6 +761,14 @@ int bind_exports(JNIEnv* e) {
     int bound = 0;
     for (size_t i = 0; i < kNumNatives; ++i) {
         uint32_t fn = elf::find_export(kNatives[i].mangled);
+        if (!fn) {
+            // JNI also permits the long form (parameter descriptor appended).
+            // Some APK libraries export this form even when the method name is
+            // not overloaded in the DEX inventory.
+            const std::string long_name = jni_long_name(kNatives[i]);
+            if (!long_name.empty()) fn = elf::find_export(long_name);
+            if (fn) LOGI("resolved long JNI export %s", long_name.c_str());
+        }
         if (!fn) continue;
         // A JNI_OnLoad/RegisterNatives call may already have supplied the
         // authoritative guest function pointer. Do not overwrite it with an

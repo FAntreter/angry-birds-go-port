@@ -212,3 +212,22 @@ The remaining caller trace is now resolved. In `AngryBirdsGoActivity.onCreate(Bu
 The later superclass/Fusion startup path calls `Globals.loadLibraries()`, which uses `Globals.getLibraryName()`; because the Activity has already set `mLibraryName` to `ABK`, this resolves to `System.loadLibrary("ABK")`. The fallback `Gen.library_name = "SkynestSDK"` is therefore not the selected library name for this game Activity path.
 
 This confirms the intended sequence and removes the uncertainty recorded in the Stage 30 follow-up: GNU C++ runtime, Skynest SDK, then metadata/Fusion-selected ABK. It also reinforces that the ARM64 package must intercept the Java load name `ABK` and hand off to the ARM32 guest engine internally; Android must not try to load the guest ARM32 `libABK.so` as a native ARM64 library.
+
+
+## Stage 32 — ARM64 Java load-name shims and APK assembly path
+
+The original Java code does not load the ARM32 DSOs under their actual ARM32 names through Android's native linker. To preserve its existing `System.loadLibrary` calls on an ARM64-only install, the package now builds ARM64 load stubs for `gnustl_shared`, `SkynestSDK`, `adcolony`, and `js`, while the ARM32 copies retain private `*_arm32.so` filenames beside the bridge. The bridge output is now named `libABK.so`, matching the manifest metadata and Fusion override confirmed in Stage 31.
+
+The stub's JNI_OnLoad returns JNI_VERSION_1_6 and does not replace the ARM32 SDK implementation. The bridge separately loads the real guest dependencies. Direct ELF inspection confirms `libadcolony.so` depends on `libjs.so` and exports its own JNI_OnLoad plus Java native symbols. The bridge now preloads that ARM32 guest pair and invokes AdColony's guest JNI_OnLoad before the final export-binding pass, so its dynamically registered methods can be captured by the existing RegisterNatives interceptor.
+
+A new `scripts/package_original_apk.sh` accepts the original APK, the completed bridge build directory, and an output APK path. It decodes the original APK with apktool, retains its Java DEX/resources/assets/manifest, adds the ARM64 bridge and stubs plus the ARM32 guest payload in `lib/arm64-v8a`, explicitly enables native-library extraction (the bridge reads guest payloads beside `libABK.so`), rebuilds, zipaligns, signs with a local debug key, and verifies the signature.
+
+The build-input validator now checks ABI-specific library naming and the presence of the APK assembly script. This is a packaging implementation path, not yet a generated APK: the original APK must be supplied to the script in the build environment, and apktool/Android build-tools must be installed. Current GitHub CI still validates and builds the native bridge; it does not possess the uploaded original APK and does not yet execute final APK assembly.
+
+## Stage 32 validation boundary
+
+- ARM64 host bridge and load-stub targets must pass the current CI run.
+- ARM32 AdColony guest loading and JNI_OnLoad are source changes pending NDK build and runtime validation.
+- The package script has not yet been run against the uploaded APK; apktool resource rebuild compatibility and signature/install behavior remain unverified.
+- Exact DEX-to-generated-table parity for all 120 methods remains a separate gate.
+- No installable APK or device launch/gameplay/audio/rendering test is claimed.

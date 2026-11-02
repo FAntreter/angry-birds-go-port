@@ -40,7 +40,7 @@ def dex_strings(data: bytes) -> list[str]:
     return out
 
 def dex_native_methods(data: bytes) -> dict[tuple[str, str, str], bool]:
-    if data[:4] != b"dex\\n":
+    if data[:4] != b"dex\n":
         raise ValueError("not a DEX file")
     strings = dex_strings(data)
     type_size, type_off = u32(data, 64), u32(data, 68)

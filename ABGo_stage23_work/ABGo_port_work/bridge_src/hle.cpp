@@ -34,7 +34,7 @@ void append_crash_line(const char* line) {
         size_t n = strlen(line);
         const char* p = line;
         while (n) { ssize_t w = write(fd, p, n); if (w <= 0) break; p += w; n -= static_cast<size_t>(w); }
-        write(fd, "\\n", 1); fsync(fd); close(fd);
+        write(fd, "\n", 1); fsync(fd); close(fd);
     }
 }
 }

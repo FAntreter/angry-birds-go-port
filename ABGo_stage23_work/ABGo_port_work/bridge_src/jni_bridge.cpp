@@ -633,25 +633,45 @@ int find_native(const std::string& cls, const char* name, const char* sig) {
 }
 
 jint j_RegisterNatives(uint32_t, uint32_t cls, GPtr<const uint32_t> methods, jint n) {
+    if (n < 0) {
+        LOGE("RegisterNatives: negative method count %d", n);
+        return JNI_ERR;
+    }
+    if (n == 0) return JNI_OK;
+
     JNIEnv* e = E();
     auto c = static_cast<jclass>(obj(cls));
     std::string cname = class_name(e, c);
+
+    // Validate the complete batch before changing either the host JVM or guest
+    // address table. Registering only the recognized subset and returning JNI_OK
+    // leaves Java with methods that appear registered but have no callable bridge.
+    std::vector<JNINativeMethod> host_methods;
+    std::vector<std::pair<size_t, uint32_t>> guest_methods;
+    host_methods.reserve(static_cast<size_t>(n));
+    guest_methods.reserve(static_cast<size_t>(n));
     for (jint i = 0; i < n; ++i) {
         const char* name = hp<const char>(methods.h()[3 * i]);
         const char* sig = hp<const char>(methods.h()[3 * i + 1]);
         uint32_t fn = methods.h()[3 * i + 2];
         int slot = find_native(cname, name, sig);
-        if (slot < 0) {
-            LOGE("RegisterNatives: no trampoline for %s.%s%s", cname.c_str(), name, sig);
-            continue;
+        if (slot < 0 || !fn) {
+            LOGE("RegisterNatives: %s trampoline for %s.%s%s",
+                 slot < 0 ? "no" : "null", cname.c_str(), name, sig);
+            return JNI_ERR;
         }
-        g_native_addr[static_cast<size_t>(slot)].store(fn, std::memory_order_release);
-        JNINativeMethod m{name, sig, kNatives[slot].tramp};
-        if (e->RegisterNatives(c, &m, 1) != JNI_OK) {
-            e->ExceptionClear();
-            LOGE("RegisterNatives failed for %s.%s", cname.c_str(), name);
-        }
+        host_methods.push_back({name, sig, kNatives[slot].tramp});
+        guest_methods.emplace_back(static_cast<size_t>(slot), fn);
     }
+
+    jint result = e->RegisterNatives(c, host_methods.data(), static_cast<jint>(host_methods.size()));
+    if (result != JNI_OK) {
+        LOGE("host RegisterNatives failed for class %s (status %d)", cname.c_str(), result);
+        return result;
+    }
+    for (const auto& [slot, fn] : guest_methods)
+        g_native_addr[slot].store(fn, std::memory_order_release);
+    LOGI("registered %zu guest native methods for %s", guest_methods.size(), cname.c_str());
     return JNI_OK;
 }
 
@@ -707,7 +727,12 @@ int bind_exports(JNIEnv* e) {
     for (size_t i = 0; i < kNumNatives; ++i) {
         uint32_t fn = elf::find_export(kNatives[i].mangled);
         if (!fn) continue;
-        g_native_addr[i].store(fn, std::memory_order_release);
+        // A JNI_OnLoad/RegisterNatives call may already have supplied the
+        // authoritative guest function pointer. Do not overwrite it with an
+        // exported-symbol fallback.
+        uint32_t expected = 0;
+        g_native_addr[i].compare_exchange_strong(expected, fn, std::memory_order_release,
+                                                  std::memory_order_relaxed);
         jclass c = e->FindClass(kNatives[i].cls);
         if (!c) {
             e->ExceptionClear();

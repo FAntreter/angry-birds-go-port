@@ -40,9 +40,12 @@ jobs:
       - name: Build Android ARM64 bridge
         run: bash scripts/build_android.sh
 
-      - name: Upload bridge library
+      - name: Stage ARM32 guest libraries beside bridge
+        run: bash scripts/package_guest_libs.sh target_libs build-android-arm64
+
+      - name: Upload bridge and guest libraries
         uses: actions/upload-artifact@v4
         with:
           name: AngryBirdsGoBridge-arm64-v8a
-          path: ABGo_stage23_work/ABGo_port_work/build-android-arm64/libAngryBirdsGoBridge.so
+          path: ABGo_stage23_work/ABGo_port_work/build-android-arm64/*.so
           if-no-files-found: error

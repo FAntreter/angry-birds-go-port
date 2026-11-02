@@ -68,3 +68,35 @@ Although `libjnigraphics.so` is listed as a dependency of `libABK.so`, this scan
 ## Status and limitations
 
 The ARM64 bridge CI build succeeded previously and stages the ARM32 guest libraries. This audit does **not** establish successful installation, startup, rendering, sound, or gameplay. No installable APK has been produced yet.
+
+## Stage 27 — long-form JNI export resolution and verified ARM64 rebuild
+
+The bridge export binder now tries both JNI symbol forms for each generated native slot:
+
+1. The short exported form already recorded in `NativeSlot::mangled`.
+2. The JNI long form, formed by appending `__` and the encoded parameter descriptor.
+
+This addresses APK libraries that expose long-form JNI names even when the DEX inventory contains only one matching method name. The static symbol cross-check now finds 8 additional methods through the long form, increasing the conventional export-name matches from 88/120 to 96/120. The remaining 24 still require investigation; this scan alone cannot determine whether they are dynamically registered, optional, or absent.
+
+Commit: `45a56f42b088c636c42f2b8c78e14e72641dda2c`  
+Build run: https://github.com/FAntreter/angry-birds-go-port/actions/runs/41506969867
+
+Verified CI result:
+- All workflow steps completed successfully, including static validators, Android ARM64 bridge compilation, guest-library staging, and artifact upload.
+- Artifact: `AngryBirdsGoBridge-arm64-v8a`
+- Artifact ID: `13170269781`
+- Size: 21,855,942 bytes
+- SHA-256: `381129dd4be261e21caf4acd246c13c690bab12ee38ac3725dc5a8f0b9a9b4ca`
+- Artifact link: https://github.com/FAntreter/angry-birds-go-port/actions/runs/41506969867/artifacts/13170269781
+
+The artifact is still a bridge/guest shared-library bundle, not an installable APK. This CI success is not an Android runtime or device test.
+
+## Next gate
+
+Before attempting device packaging, the next high-value checks are:
+1. Produce a descriptor-by-descriptor comparison of all 120 DEX native declarations against `natives_gen.inc`, including static/instance flags and return/argument ABI types.
+2. Capture and verify the SDK's actual `JNI_OnLoad` / `RegisterNatives` registrations. The bridge rejects any registration batch containing a method without a generated slot, but no runtime trace yet establishes which of the remaining 24 are registered.
+3. Build the Android Java/Activity wrapper and package the host ARM64 bridge plus ARM32 guest libraries alongside the original APK's Java code and assets.
+4. Replace the current silent OpenSL ES path before claiming audio support.
+
+No installable APK, on-device launch, rendering, gameplay, or audible output has been verified.

@@ -50,4 +50,18 @@ target_compile_definitions(AngryBirdsGoBridge PRIVATE ABSW_TRACE=0)
 target_compile_options(AngryBirdsGoBridge PRIVATE -fvisibility=hidden $<$<COMPILE_LANGUAGE:C>:-w>)
 target_link_libraries(AngryBirdsGoBridge PRIVATE dynarmic GLESv2 EGL android log OpenSLES dl)
 target_link_options(AngryBirdsGoBridge PRIVATE -Wl,--exclude-libs,ALL -Wl,--gc-sections)
-set_target_properties(AngryBirdsGoBridge PROPERTIES OUTPUT_NAME "AngryBirdsGoBridge")
+# Java loads the engine using the manifest-selected name "ABK". The ARM64
+# bridge occupies that name; original ARM32 DSOs are kept as *_arm32.so data.
+set_target_properties(AngryBirdsGoBridge PROPERTIES OUTPUT_NAME "ABK")
+
+# The original Java Activity calls System.loadLibrary("gnustl_shared") and
+# System.loadLibrary("SkynestSDK") before loading ABK. These ARM64 no-op
+# load stubs satisfy Android's linker; the real ARM32 libraries are loaded
+# privately by the bridge and their SDK JNI_OnLoad is invoked there.
+add_library(GoLoadStub SHARED bridge_src/load_stub.cpp)
+target_link_libraries(GoLoadStub PRIVATE log)
+set_target_properties(GoLoadStub PROPERTIES OUTPUT_NAME "gnustl_shared")
+
+add_library(GoSdkLoadStub SHARED bridge_src/load_stub.cpp)
+target_link_libraries(GoSdkLoadStub PRIVATE log)
+set_target_properties(GoSdkLoadStub PROPERTIES OUTPUT_NAME "SkynestSDK")

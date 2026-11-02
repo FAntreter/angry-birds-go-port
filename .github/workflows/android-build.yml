@@ -1,0 +1,48 @@
+name: Android ARM64 bridge build
+
+on:
+  push:
+    paths:
+      - "ABGo_stage23_work/ABGo_port_work/**"
+      - ".github/workflows/android-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-arm64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: ABGo_stage23_work/ABGo_port_work
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build git curl unzip
+
+      - name: Bootstrap Android NDK and Dynarmic
+        run: bash scripts/bootstrap_android_deps.sh
+
+      - name: Run static source validators
+        run: |
+          set -e
+          for f in tools/validate_*.py; do
+            echo "== $f =="
+            python3 "$f"
+          done
+
+      - name: Build Android ARM64 bridge
+        run: bash scripts/build_android.sh
+
+      - name: Upload bridge library
+        uses: actions/upload-artifact@v4
+        with:
+          name: AngryBirdsGoBridge-arm64-v8a
+          path: ABGo_stage23_work/ABGo_port_work/build-android-arm64/libAngryBirdsGoBridge.so
+          if-no-files-found: error

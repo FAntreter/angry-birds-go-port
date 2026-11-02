@@ -16,19 +16,16 @@
 namespace {
 std::mutex g_mu;
 uint32_t g_next = 0x70000000u;
+// Android's EGL headers typedef EGLDisplay, EGLConfig, EGLContext, and
+// EGLSurface to the same native pointer type (void*). C++ therefore cannot
+// specialize templates separately for those aliases. Keep one host-handle
+// registry for EGL's opaque pointer handles and a separate one for windows.
 template<class T> std::unordered_map<uint32_t,T>& table();
-template<> std::unordered_map<uint32_t,EGLDisplay>& table<EGLDisplay>() { static std::unordered_map<uint32_t,EGLDisplay> t; return t; }
-template<> std::unordered_map<uint32_t,EGLConfig>& table<EGLConfig>() { static std::unordered_map<uint32_t,EGLConfig> t; return t; }
-template<> std::unordered_map<uint32_t,EGLContext>& table<EGLContext>() { static std::unordered_map<uint32_t,EGLContext> t; return t; }
-template<> std::unordered_map<uint32_t,EGLSurface>& table<EGLSurface>() { static std::unordered_map<uint32_t,EGLSurface> t; return t; }
+template<> std::unordered_map<uint32_t,void*>& table<void*>() { static std::unordered_map<uint32_t,void*> t; return t; }
 template<> std::unordered_map<uint32_t,ANativeWindow*>& table<ANativeWindow*>() { static std::unordered_map<uint32_t,ANativeWindow*> t; return t; }
-// EGL configs, contexts, and surfaces belong to the display that created or
-// returned them. Keep this separately from host handles so terminating one
-// display cannot invalidate tokens owned by another display.
+
 template<class T> std::unordered_map<uint32_t,uint32_t>& owners();
-template<> std::unordered_map<uint32_t,uint32_t>& owners<EGLConfig>() { static std::unordered_map<uint32_t,uint32_t> t; return t; }
-template<> std::unordered_map<uint32_t,uint32_t>& owners<EGLContext>() { static std::unordered_map<uint32_t,uint32_t> t; return t; }
-template<> std::unordered_map<uint32_t,uint32_t>& owners<EGLSurface>() { static std::unordered_map<uint32_t,uint32_t> t; return t; }
+template<> std::unordered_map<uint32_t,uint32_t>& owners<void*>() { static std::unordered_map<uint32_t,uint32_t> t; return t; }
 
 // All guest-visible opaque handles share one token namespace. Keep allocation
 // collision-safe even after the 32-bit counter wraps; stale tokens must never

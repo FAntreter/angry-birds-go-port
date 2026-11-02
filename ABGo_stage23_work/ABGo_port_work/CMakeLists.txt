@@ -17,17 +17,16 @@ if(NOT DYNARMIC_SRC OR NOT EXISTS "${DYNARMIC_SRC}/CMakeLists.txt")
   message(FATAL_ERROR "Set -DDYNARMIC_SRC=/path/to/dynarmic (A32 frontend required).")
 endif()
 
+# Boost is header-only here. Expose host Boost headers to the Android
+# cross-compiler after the NDK sysroot, for Dynarmic and bridge sources.
+add_compile_options(-idirafter /usr/include)
+
 set(DYNARMIC_USE_BUNDLED_EXTERNALS ON CACHE BOOL "" FORCE)
 set(DYNARMIC_TESTS OFF CACHE BOOL "" FORCE)
 set(DYNARMIC_FRONTENDS "A32" CACHE STRING "" FORCE)
 set(DYNARMIC_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
 set(DYNARMIC_USE_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
 add_subdirectory("${DYNARMIC_SRC}" "${CMAKE_CURRENT_BINARY_DIR}/dynarmic" EXCLUDE_FROM_ALL)
-
-# Dynarmic uses Boost headers. CMake finds the host headers, but Android's
-# Clang sysroot does not search the host include tree by default. Search it
-# only after the NDK sysroot so Android libc/C++ headers remain authoritative.
-target_compile_options(dynarmic PRIVATE -idirafter /usr/include)
 
 add_library(AngryBirdsGoBridge SHARED
   bridge_src/arena.cpp

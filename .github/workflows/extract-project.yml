@@ -1,0 +1,24 @@
+name: Extract project archive
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract ZIP
+        run: unzip -o ABGo_port_work_stage25.zip -d .
+      - name: Create pull request with extracted files
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: Extract Android port project
+          title: Extract Android port project
+          body: Expands the existing project ZIP into the repository tree.
+          branch: extract-project-archive
+          add-paths: ABGo_stage23_work/

@@ -192,3 +192,10 @@ A repository-tree audit also found no Android Gradle project, Android manifest, 
 5. Replace silent OpenSL ES playback and validate audio, rendering, and lifecycle behavior on an ARM64 device.
 
 No installable APK, on-device launch, rendering, gameplay, or audible output has been verified.
+
+
+### Stage 30 follow-up — resolved default Fusion library name
+
+The DEX static initializer for `com.rovio.fusionapp.Gen` explicitly assigns `Gen.library_name = "SkynestSDK"`. `Globals.getLibraryName()` therefore falls back to `SkynestSDK` unless `Globals.setLibraryName(String)` has first populated `Globals.mLibraryName`. The setter writes that static override field, and `Globals.loadLibraries()` passes the selected value to `System.loadLibrary`.
+
+So the default Fusion load is `SkynestSDK`, matching the library already loaded explicitly by `AngryBirdsGoActivity`; Android's repeated load of the same library name is expected to reuse the loaded library. A runtime override remains possible, and the call sites that set `mLibraryName` still need to be traced before treating the default as the only path.

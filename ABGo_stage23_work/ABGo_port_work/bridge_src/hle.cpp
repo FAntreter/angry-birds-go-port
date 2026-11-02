@@ -20,11 +20,22 @@ void append_crash_line(const char* line) {
     mkdir("/sdcard/Android/data", 0770);
     mkdir("/sdcard/Android/data/com.rovio.angrybirdsgo", 0770);
     mkdir("/sdcard/Android/data/com.rovio.angrybirdsgo/files", 0770);
-    int fd = open(kCrashLog, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0660);
-    if (fd < 0) return;
-    size_t n = strlen(line);
-    while (n) { ssize_t w = write(fd, line, n); if (w <= 0) break; line += w; n -= static_cast<size_t>(w); }
-    write(fd, "\n", 1); fsync(fd); close(fd);
+    // Keep the app-private copy, and also try a user-visible Downloads copy.
+    // The original game targets API 26, so legacy shared-storage access may be
+    // available on devices that still honor the app's target SDK.
+    const char* paths[] = {
+        kCrashLog,
+        "/sdcard/Download/abgo_bridge_crash.txt",
+        "/storage/emulated/0/Download/abgo_bridge_crash.txt"
+    };
+    for (const char* path : paths) {
+        int fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0660);
+        if (fd < 0) continue;
+        size_t n = strlen(line);
+        const char* p = line;
+        while (n) { ssize_t w = write(fd, p, n); if (w <= 0) break; p += w; n -= static_cast<size_t>(w); }
+        write(fd, "\\n", 1); fsync(fd); close(fd);
+    }
 }
 }
 void bridge_log(const char* fmt, ...) {

@@ -133,3 +133,29 @@ The main Exient GL view exposes the 17 expected lifecycle/render/input native me
 5. Replace silent OpenSL ES playback before claiming audio support.
 
 No installable APK, on-device launch, rendering, gameplay, or audible output has been verified.
+
+
+## Stage 29 — confirmed Java native-library load sequence
+
+A direct instruction-level scan of the original APK's `classes.dex` located the actual `System.loadLibrary(String)` call sites and their argument construction. The key ordering in `AngryBirdsGoActivity.onCreate` is now confirmed:
+
+1. `System.loadLibrary("gnustl_shared")`
+2. `System.loadLibrary("SkynestSDK")`
+3. Invoke superclass `XGSActivity.onCreate(...)`; the superclass chain reaches `ExientActivity.onCreate(...)`.
+4. `ExientActivity.onCreate` reads the activity metadata key `android.app.lib_name` and passes its value to `System.loadLibrary`. The original manifest value is `ABK`, so this loads `libABK.so` after its two explicit dependencies.
+
+This is important: the subclass loads the GNU C++ runtime and Skynest SDK before calling the superclass that loads ABK. A replacement packaging/loader must preserve this ordering or provide equivalent dependency resolution. It must not simply rename the ARM64 host bridge to `libABK.so` while also expecting the ARM32 guest `libABK.so` to be loaded natively by Android.
+
+The DEX also contains AdColony's own `System.loadLibrary` calls for `js` and `adcolony`. These are a separate SDK path and need to be considered when retaining the original Java layer; they are not evidence that the game core itself is loaded through those names.
+
+The DEX parser reconfirmed 120 native declarations in `classes.dex`, zero in `classes2.dex`, with 41 static and 79 instance native declarations. This count is a parser result only; it does not replace the pending exact comparison against the 120 generated bridge rows.
+
+## Updated next gate
+
+1. Compare all 120 DEX declarations against the generated table by class, method, and descriptor; separately validate JNI ABI argument/return types and account for the 41 static declarations.
+2. Preserve the Java load order: `gnustl_shared`, `SkynestSDK`, then metadata-selected `ABK`; also account for AdColony's `js` and `adcolony` libraries.
+3. Trace runtime SDK `JNI_OnLoad` / `RegisterNatives` calls and resolve the 24 declarations without conventional exported-symbol matches.
+4. Implement the Android package so Java's existing load calls reach the ARM64 host bridge while the ARM32 guest libraries remain private inputs to Dynarmic's loader.
+5. Replace silent OpenSL ES playback before claiming audio support.
+
+No installable APK, on-device launch, rendering, gameplay, or audible output has been verified.

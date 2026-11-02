@@ -113,6 +113,26 @@ extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*) {
     std::unordered_set<std::string> active;
     elf::Module* game = load_guest_tree("libABK.so", kGuestLibFile, loaded, active);
 
+    // Android calls JNI_OnLoad for a library loaded by Java. The guest SDK is
+    // brought in as a DT_NEEDED dependency instead, so invoke its lifecycle hook
+    // explicitly after all guest dependencies and ELF constructors are ready.
+    // The Go SDK's JNI_OnLoad stores the JavaVM and returns JNI_VERSION_1_6.
+    if (auto it = loaded.find("libSkynestSDK.so"); it != loaded.end()) {
+        auto on_load = it->second->exports.find("JNI_OnLoad");
+        if (on_load == it->second->exports.end())
+            fatal("libSkynestSDK.so is missing JNI_OnLoad");
+        jint sdk_version;
+        {
+            jni::Scope scope(env);
+            sdk_version = static_cast<jint>(cpu::call(on_load->second, {jni::guest_vm(), 0}));
+        }
+        LOGI("libSkynestSDK.so JNI_OnLoad returned 0x%x", sdk_version);
+        if (sdk_version != JNI_VERSION_1_6)
+            fatal("libSkynestSDK.so requested unsupported JNI version 0x%x", sdk_version);
+    } else {
+        fatal("libSkynestSDK.so was not loaded as a guest dependency");
+    }
+
     int bound = jni::bind_exports(env);
     LOGI("bound %d native methods", bound);
 

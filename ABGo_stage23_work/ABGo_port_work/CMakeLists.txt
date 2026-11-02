@@ -65,3 +65,11 @@ set_target_properties(GoLoadStub PROPERTIES OUTPUT_NAME "gnustl_shared")
 add_library(GoSdkLoadStub SHARED bridge_src/load_stub.cpp)
 target_link_libraries(GoSdkLoadStub PRIVATE log)
 set_target_properties(GoSdkLoadStub PROPERTIES OUTPUT_NAME "SkynestSDK")
+
+add_library(GoAdcolonyLoadStub SHARED bridge_src/load_stub.cpp)
+target_link_libraries(GoAdcolonyLoadStub PRIVATE log)
+set_target_properties(GoAdcolonyLoadStub PROPERTIES OUTPUT_NAME "adcolony")
+
+add_library(GoJsLoadStub SHARED bridge_src/load_stub.cpp)
+target_link_libraries(GoJsLoadStub PRIVATE log)
+set_target_properties(GoJsLoadStub PROPERTIES OUTPUT_NAME "js")

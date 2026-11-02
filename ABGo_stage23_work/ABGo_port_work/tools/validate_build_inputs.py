@@ -20,6 +20,12 @@ if native.exists():
     if count != 120: errors.append(f'expected 120 Go native trampolines, found {count}')
     if 'com/rovio/angrybirdsgo/AngryBirdsGoActivity' not in txt: errors.append('Go Activity native methods not represented')
     if 'com/exient/ExientGLSurfaceView' not in txt: errors.append('Exient surface native methods not represented')
+cmake=(root/'CMakeLists.txt').read_text() if (root/'CMakeLists.txt').exists() else ''
+if 'OUTPUT_NAME "ABK"' not in cmake: errors.append('ARM64 bridge output must be named libABK.so for the original manifest')
+for name in ('gnustl_shared','SkynestSDK','adcolony','js'):
+    if f'OUTPUT_NAME "{name}"' not in cmake: errors.append(f'missing ARM64 Java load stub target: {name}')
+if not (root/'bridge_src'/'load_stub.cpp').is_file(): errors.append('missing ARM64 Java load-stub source')
+if not (root/'scripts'/'package_original_apk.sh').is_file(): errors.append('missing original APK packaging script')
 if errors:
     print('BUILD INPUT VALIDATION FAILED')
     print('\n'.join('- '+e for e in errors)); sys.exit(1)

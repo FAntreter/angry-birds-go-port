@@ -1,0 +1,1 @@
+PASS: EGLTerminate removes only resources tagged to the terminated display

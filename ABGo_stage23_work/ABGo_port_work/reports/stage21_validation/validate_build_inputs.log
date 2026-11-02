@@ -1,0 +1,4 @@
+BUILD INPUT VALIDATION PASSED
+generated includes: present
+Go-specific JNI trampolines: 120
+CMake target: arm64-v8a Android shared library (Dynarmic source required)

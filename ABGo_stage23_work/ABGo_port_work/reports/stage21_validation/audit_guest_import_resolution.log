@@ -1,0 +1,4 @@
+Wrote reports/stage9_guest_import_resolution.md
+HLE name present (ABI unverified): 480
+exported by another bundled guest ELF (scope/order unverified): 368
+no matching guest export or HLE name: 335

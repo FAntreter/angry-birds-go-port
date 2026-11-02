@@ -1,0 +1,2 @@
+PASS: 18 additional GLES2 imports have wrappers and registrations
+NOTE: static source check only; Android NDK compile/runtime test not performed

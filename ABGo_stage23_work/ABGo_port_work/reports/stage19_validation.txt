@@ -1,0 +1,11 @@
+Static validation run (2026-10-29):
+PASS tools/validate_egl_lifecycle.py
+PASS tools/validate_egl_hle.py
+PASS tools/validate_build_inputs.py
+PASS tools/validate_asset_hle.py
+PASS tools/validate_recursive_loader.py
+PASS tools/validate_gles_hle.py
+PASS tools/validate_dt_needed.py
+
+Not run: Android NDK compile, emulator/device launch, gameplay test.
+Reason: no Android NDK toolchain or Dynarmic source checkout is available in this environment.

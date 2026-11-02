@@ -1,0 +1,25 @@
+$ tools/validate_egl_lifecycle.py
+PASS: EGLTerminate removes only resources tagged to the terminated display
+$ tools/validate_egl_hle.py
+PASS: 24 EGL/native-window HLE registrations present; build wiring present
+$ tools/validate_build_inputs.py
+BUILD INPUT VALIDATION PASSED
+generated includes: present
+Go-specific JNI trampolines: 120
+CMake target: arm64-v8a Android shared library (Dynarmic source required)
+$ tools/validate_asset_hle.py
+PASS: 5 new Android asset imports and 4 existing imports are registered
+NOTE: static source check only; not an NDK compile or runtime test
+$ tools/validate_recursive_loader.py
+PASS: Go ARM32 root library selected
+PASS: DT_NEEDED parser used before module load
+PASS: known host Android libraries explicitly classified
+PASS: guest dependencies mapped to ARM32-suffixed filenames
+PASS: dependency-first recursive loading present
+PASS: cycles detected rather than silently recursed
+PASS: constructors run after dependency loading
+PASS: legacy hard-coded Star Wars guest root removed
+$ tools/validate_gles_hle.py
+PASS: 18 additional GLES2 imports have wrappers and registrations
+NOTE: static source check only; Android NDK compile/runtime test not performed
+$ tools/validate_dt_needed.py

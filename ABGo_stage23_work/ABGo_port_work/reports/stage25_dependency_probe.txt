@@ -1,0 +1,9 @@
+Environment probe (2026-10-29)
+cmake: present
+ninja: present
+Android NDK toolchain: not found
+Dynarmic A32 source: not found
+ANDROID_NDK_HOME: unset
+DYNARMIC_SRC: unset
+Network test to github.com via git ls-remote: failed, DNS resolution unavailable
+Build result: BLOCKED before configure/compile; no APK produced

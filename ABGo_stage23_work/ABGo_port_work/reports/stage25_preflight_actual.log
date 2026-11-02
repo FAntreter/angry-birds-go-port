@@ -1,0 +1,4 @@
+ANDROID BUILD PREFLIGHT: BLOCKED
+BLOCKER: Android NDK not found (set ANDROID_NDK_HOME to an installed NDK)
+BLOCKER: Dynarmic A32 source checkout not found (set DYNARMIC_SRC to a compatible checkout)
+No compilation was attempted because required toolchain inputs are absent.

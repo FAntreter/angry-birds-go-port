@@ -1,0 +1,8 @@
+PASS: Go ARM32 root library selected
+PASS: DT_NEEDED parser used before module load
+PASS: known host Android libraries explicitly classified
+PASS: guest dependencies mapped to ARM32-suffixed filenames
+PASS: dependency-first recursive loading present
+PASS: cycles detected rather than silently recursed
+PASS: constructors run after dependency loading
+PASS: legacy hard-coded Star Wars guest root removed

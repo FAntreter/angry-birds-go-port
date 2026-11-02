@@ -199,3 +199,16 @@ No installable APK, on-device launch, rendering, gameplay, or audible output has
 The DEX static initializer for `com.rovio.fusionapp.Gen` explicitly assigns `Gen.library_name = "SkynestSDK"`. `Globals.getLibraryName()` therefore falls back to `SkynestSDK` unless `Globals.setLibraryName(String)` has first populated `Globals.mLibraryName`. The setter writes that static override field, and `Globals.loadLibraries()` passes the selected value to `System.loadLibrary`.
 
 So the default Fusion load is `SkynestSDK`, matching the library already loaded explicitly by `AngryBirdsGoActivity`; Android's repeated load of the same library name is expected to reuse the loaded library. A runtime override remains possible, and the call sites that set `mLibraryName` still need to be traced before treating the default as the only path.
+
+
+## Stage 31 — resolved Fusion library override in the game Activity
+
+The remaining caller trace is now resolved. In `AngryBirdsGoActivity.onCreate(Bundle)`, the bytecode executes these operations in this order:
+
+1. `System.loadLibrary("gnustl_shared")`
+2. `System.loadLibrary("SkynestSDK")`
+3. `Globals.setLibraryName("ABK")`
+
+The later superclass/Fusion startup path calls `Globals.loadLibraries()`, which uses `Globals.getLibraryName()`; because the Activity has already set `mLibraryName` to `ABK`, this resolves to `System.loadLibrary("ABK")`. The fallback `Gen.library_name = "SkynestSDK"` is therefore not the selected library name for this game Activity path.
+
+This confirms the intended sequence and removes the uncertainty recorded in the Stage 30 follow-up: GNU C++ runtime, Skynest SDK, then metadata/Fusion-selected ABK. It also reinforces that the ARM64 package must intercept the Java load name `ABK` and hand off to the ARM32 guest engine internally; Android must not try to load the guest ARM32 `libABK.so` as a native ARM64 library.

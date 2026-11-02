@@ -100,3 +100,36 @@ Before attempting device packaging, the next high-value checks are:
 4. Replace the current silent OpenSL ES path before claiming audio support.
 
 No installable APK, on-device launch, rendering, gameplay, or audible output has been verified.
+
+
+## Stage 28 — latest CI verification and original Android entry-point audit
+
+The documentation commit `988a82e94c6779ad04db23d5537bb4186b18f3a6` was built by workflow run `41507873613`. The run completed successfully. Its `build-arm64` job passed all eight substantive steps: checkout, tool installation, Android NDK/Dynarmic bootstrap, static validators, ARM64 bridge build, ARM32 guest-library staging, and artifact upload. This confirms the latest repository state still builds; it is not an Android runtime test.
+
+The original APK was re-inspected locally (SHA-256 remains `b7aa722b63cef19dd365d57291e0580316253b969768c3f1b1e687d7fd60fab8`). A direct DEX class-data parse reconfirmed:
+- `classes.dex`: 120 methods marked `ACC_NATIVE`
+- `classes2.dex`: 0 methods marked `ACC_NATIVE`
+- Total: 120
+
+The binary Android manifest was decoded. Relevant launch/package facts:
+- Package: `com.rovio.angrybirdsgo`
+- Version: `2.9.1` (versionCode 29100)
+- minSdkVersion 16; targetSdkVersion 26
+- Application class: `com.rovio.angrybirdsgo.AngryBirdsGoApplication`
+- Launcher Activity: `com.rovio.angrybirdsgo.AngryBirdsGoActivity`
+- Native library metadata: `android.app.lib_name=ABK`
+- Declares OpenGL ES 2.0 (`glEsVersion=0x20000`); camera and autofocus features are optional.
+
+This changes the packaging plan: the APK already contains the Java Application, launcher Activity, Exient Activity/GL surface classes, manifest, and game assets. A completely new Java Activity wrapper is not the first requirement. Prefer preserving the original Java/asset layer and making the ARM64 package satisfy its existing native-load contract. The manifest's `ABK` library metadata is a strong indication that the app expects the native library under the `libABK.so` name; the bridge/guest-loader packaging must be designed around that without confusing the ARM64 host bridge with the ARM32 guest `libABK.so`.
+
+The main Exient GL view exposes the 17 expected lifecycle/render/input native methods already represented in the generated trampoline table. The exact descriptor-by-descriptor and static/instance comparison across all 120 declarations is still an open validation gate; the matching total alone is not proof of exact parity.
+
+## Updated next gate
+
+1. Finish the exact 120-entry DEX-to-`natives_gen.inc` comparison, including class, name, descriptor, and access flags.
+2. Trace the Java library load sequence and confirm how `ABK`, `SkynestSDK`, and `gnustl_shared` are loaded before designing the final ABI-specific filenames and guest asset paths.
+3. Verify guest `JNI_OnLoad` and `RegisterNatives` behavior at runtime; 24 declarations still lack a conventional short/long exported symbol match.
+4. Build the installable ARM64 APK by retaining the original Java classes/assets and integrating the host bridge plus separately staged ARM32 guest libraries.
+5. Replace silent OpenSL ES playback before claiming audio support.
+
+No installable APK, on-device launch, rendering, gameplay, or audible output has been verified.

@@ -1,0 +1,1 @@
+PASS: shared token allocator checks every live handle table, handles wrap, and fails safely on exhaustion

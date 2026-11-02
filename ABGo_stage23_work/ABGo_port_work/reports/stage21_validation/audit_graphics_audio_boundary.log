@@ -1,0 +1,5 @@
+Wrote reports/stage8_graphics_audio_boundary.md (44 categorized symbol/library rows)
+EGL: 20 unique imports, 0 without direct HLE registration
+Native window/config: 1 unique imports, 0 without direct HLE registration
+OpenSL ES audio: 9 unique imports, 9 without direct HLE registration
+Android assets: 10 unique imports, 0 without direct HLE registration

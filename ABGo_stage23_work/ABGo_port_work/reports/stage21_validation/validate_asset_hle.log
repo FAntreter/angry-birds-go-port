@@ -1,0 +1,2 @@
+PASS: 5 new Android asset imports and 4 existing imports are registered
+NOTE: static source check only; not an NDK compile or runtime test

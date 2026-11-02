@@ -1,0 +1,28 @@
+Root: libABK.so
+
+Guest libraries in dependency-first order:
+  1. libgnustl_shared.so
+  2. libSkynestSDK.so
+  3. libABK.so
+
+Android host/HLE libraries referenced:
+  libEGL.so
+  libGLESv2.so
+  libOpenSLES.so
+  libandroid.so
+  libc.so
+  libdl.so
+  libjnigraphics.so
+  liblog.so
+  libm.so
+  libstdc++.so
+
+Dependencies not present in extracted guest set and not in host allowlist:
+  (none)
+
+Cycles:
+
+Notes:
+  - This is a static dependency plan, not proof that symbols or relocations resolve.
+  - Host library names require implemented forwarding/HLE functions; listing a host library does not mean it is supported.
+  - The existing bridge loader still needs integration for recursive loading, cross-module symbol resolution, and constructor ordering.

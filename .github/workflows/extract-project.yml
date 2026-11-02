@@ -1,6 +1,9 @@
 name: Extract project archive
 
 on:
+  push:
+    paths:
+      - ".github/workflows/extract-project.yml"
   workflow_dispatch:
 
 permissions:

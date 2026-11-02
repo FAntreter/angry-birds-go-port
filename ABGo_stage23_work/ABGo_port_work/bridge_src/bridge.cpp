@@ -133,6 +133,25 @@ extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*) {
         fatal("libSkynestSDK.so was not loaded as a guest dependency");
     }
 
+    // AdColony's Java code loads "js" and "adcolony" separately after the
+    // Activity starts. Its ARM64 load stubs only satisfy Android's linker;
+    // preload the real ARM32 guest pair now so its JNI exports and
+    // RegisterNatives hook are available to the guest JNI environment.
+    elf::Module* adcolony = load_guest_tree("libadcolony.so", "libadcolony_arm32.so",
+                                            loaded, active);
+    if (auto on_load = adcolony->exports.find("JNI_OnLoad"); on_load != adcolony->exports.end()) {
+        jint sdk_version;
+        {
+            jni::Scope scope(env);
+            sdk_version = static_cast<jint>(cpu::call(on_load->second, {jni::guest_vm(), 0}));
+        }
+        LOGI("libadcolony.so JNI_OnLoad returned 0x%x", sdk_version);
+        if (sdk_version != JNI_VERSION_1_6)
+            fatal("libadcolony.so requested unsupported JNI version 0x%x", sdk_version);
+    } else {
+        fatal("libadcolony.so is missing JNI_OnLoad");
+    }
+
     int bound = jni::bind_exports(env);
     LOGI("bound %d native methods", bound);
 

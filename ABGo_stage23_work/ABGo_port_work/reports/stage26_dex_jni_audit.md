@@ -159,3 +159,36 @@ The DEX parser reconfirmed 120 native declarations in `classes.dex`, zero in `cl
 5. Replace silent OpenSL ES playback before claiming audio support.
 
 No installable APK, on-device launch, rendering, gameplay, or audible output has been verified.
+
+
+## Stage 30 — latest bridge build and dynamic library-name path
+
+Workflow run [41509067165](https://github.com/FAntreter/angry-birds-go-port/actions/runs/41509067165) completed successfully on commit `c6b9f03804fa7650cdf003cde1209b59301d1e7a`. All eight substantive steps passed: tool installation, Android NDK/Dynarmic bootstrap, static validators, ARM64 bridge compilation, ARM32 guest-library staging, and artifact upload.
+
+The resulting artifact is:
+- Name: `AngryBirdsGoBridge-arm64-v8a`
+- Artifact ID: `13172062510`
+- Size: 21,855,942 bytes
+- SHA-256: `63cccd632e43db98214e237e894e2983e25ac1bddd95478b632ce61edc2fc79e`
+- [Download artifact](https://github.com/FAntreter/angry-birds-go-port/actions/runs/41509067165/artifacts/13172062510)
+
+It remains a shared-library bundle, not an installable APK.
+
+A further instruction-level DEX trace resolved the previously noted `Globals.loadLibraries()` path:
+- It first attempts `Globals.newInstanceIfAvailable("com.rovio.fusion.Haptics")`.
+- It then calls `Globals.getLibraryName()` to construct a diagnostic string and calls `System.loadLibrary(getLibraryName())`.
+- `getLibraryName()` returns `Globals.mLibraryName` when non-null; otherwise it returns `Gen.library_name`.
+
+This means there is an additional Java-controlled native library load whose final library name depends on runtime/static field initialization. The bytecode trace establishes the data path, but the final value of `Gen.library_name` / `mLibraryName` has not yet been established. It must be resolved before finalizing the compatibility library-name mapping. The optional Haptics class also needs to be considered when preserving the original Java layer.
+
+A repository-tree audit also found no Android Gradle project, Android manifest, or APK packaging target in the current project tree. The existing CI therefore builds only the ARM64 bridge and stages guest libraries; it does not assemble an application package.
+
+## Updated next gate
+
+1. Resolve the runtime value and initialization source of `Gen.library_name` and `Globals.mLibraryName`, then map every Java `System.loadLibrary` name to the correct ARM64 host/guest-loader behavior.
+2. Complete exact descriptor-by-descriptor and static/instance parity validation between the 120 DEX declarations and `natives_gen.inc`; counts alone are insufficient.
+3. Capture guest `JNI_OnLoad` / `RegisterNatives` behavior and account for the 24 declarations without conventional short/long exported-symbol matches.
+4. Add an Android packaging project that retains the original APK's Java classes, manifest, and assets while keeping ARM32 guest libraries separate from ARM64 host libraries.
+5. Replace silent OpenSL ES playback and validate audio, rendering, and lifecycle behavior on an ARM64 device.
+
+No installable APK, on-device launch, rendering, gameplay, or audible output has been verified.

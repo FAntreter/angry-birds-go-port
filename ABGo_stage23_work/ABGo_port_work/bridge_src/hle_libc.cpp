@@ -15,6 +15,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/statfs.h>
+#include <sys/sysinfo.h>
 #include <sys/syscall.h>
 #include <sys/system_properties.h>
 #include <sys/time.h>
@@ -577,6 +578,28 @@ uint32_t g_getauxval(uint32_t type) {
     default: return 0;
     }
 }
+// Translate the host 64-bit sysinfo layout into the ARM32 guest ABI layout.
+int32_t g_sysinfo(GPtr<uint8_t> out) {
+    struct sysinfo s{};
+    if (sysinfo(&s) != 0) return -1;
+    uint8_t* p = out.h();
+    memset(p, 0, 64);
+    auto p32 = [&](int off, uint32_t v) { memcpy(p + off, &v, 4); };
+    p32(0, static_cast<uint32_t>(s.uptime));
+    for (int i = 0; i < 3; ++i) p32(4 + i * 4, static_cast<uint32_t>(s.loads[i]));
+    p32(16, static_cast<uint32_t>(s.totalram));
+    p32(20, static_cast<uint32_t>(s.freeram));
+    p32(24, static_cast<uint32_t>(s.sharedram));
+    p32(28, static_cast<uint32_t>(s.bufferram));
+    p32(32, static_cast<uint32_t>(s.totalswap));
+    p32(36, static_cast<uint32_t>(s.freeswap));
+    uint16_t procs = s.procs;
+    memcpy(p + 40, &procs, sizeof(procs));
+    p32(44, static_cast<uint32_t>(s.totalhigh));
+    p32(48, static_cast<uint32_t>(s.freehigh));
+    p32(52, static_cast<uint32_t>(s.mem_unit));
+    return 0;
+}
 int32_t g_system_property_get(GStr name, GPtr<char> value) { return __system_property_get(name.h(), value.h()); }
 int32_t g_sched_yield() { return sched_yield(); }
 int32_t g_sigaction(int32_t, GPtr<const void>, GPtr<uint8_t> old) {
@@ -743,7 +766,7 @@ const hle::Def kDefs[] = {
     H("inet_ntop", g_inet_ntop), H("inet_pton", g_inet_pton), HE("gethostname", g_gethostname),
     H("getpid", g_getpid), H("getuid", g_getuid), H("geteuid", g_geteuid), H("getgid", g_getgid), H("getegid", g_getegid), H("getpwuid", g_getpwuid), H("getenv", g_getenv),
     H("setlocale", g_setlocale), H("sysconf", g_sysconf), H("getauxval", g_getauxval),
-    H("__system_property_get", g_system_property_get), H("sched_yield", g_sched_yield),
+    H("sysinfo", g_sysinfo), H("__system_property_get", g_system_property_get), H("sched_yield", g_sched_yield),
     H("sigaction", g_sigaction), H("sigprocmask", g_sigprocmask), HRAW("abort", g_abort), H("exit", g_exit),
     H("raise", g_raise), HRAW("__stack_chk_fail", g_stack_chk_fail), HRAW("syscall", g_syscall),
     H("dlopen", g_dlopen), H("dlsym", g_dlsym), H("dlclose", g_dlclose), H("dlerror", g_dlerror),

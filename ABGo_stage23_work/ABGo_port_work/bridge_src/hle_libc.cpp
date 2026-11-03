@@ -542,6 +542,7 @@ int32_t g_gethostname(GPtr<char> b, uint32_t n) { return gethostname(b.h(), n); 
 
 // ---------------------------------------------------------------- process / environment
 int32_t g_getpid() { return getpid(); }
+uint32_t g_getuid() { return getuid(); }
 uint32_t g_geteuid() { return geteuid(); }
 uint32_t g_getpwuid(uint32_t uid) {
     static uint32_t pw = arena::static_alloc(24, 4);
@@ -738,7 +739,7 @@ const hle::Def kDefs[] = {
     HE("getpeername", g_getpeername), HE("send", g_send), HE("recv", g_recv), HE("recvfrom", g_recvfrom),
     HE("setsockopt", g_setsockopt), HE("getsockopt", g_getsockopt), H("inet_addr", g_inet_addr),
     H("inet_ntop", g_inet_ntop), H("inet_pton", g_inet_pton), HE("gethostname", g_gethostname),
-    H("getpid", g_getpid), H("geteuid", g_geteuid), H("getpwuid", g_getpwuid), H("getenv", g_getenv),
+    H("getpid", g_getpid), H("getuid", g_getuid), H("geteuid", g_geteuid), H("getpwuid", g_getpwuid), H("getenv", g_getenv),
     H("setlocale", g_setlocale), H("sysconf", g_sysconf), H("getauxval", g_getauxval),
     H("__system_property_get", g_system_property_get), H("sched_yield", g_sched_yield),
     H("sigaction", g_sigaction), H("sigprocmask", g_sigprocmask), HRAW("abort", g_abort), H("exit", g_exit),

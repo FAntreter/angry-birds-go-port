@@ -94,6 +94,7 @@ elf::Module* load_guest_tree(const std::string& soname, const std::string& filen
 }  // namespace
 
 extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*) {
+    install_crash_handlers();
     JNIEnv* env = nullptr;
     if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) return JNI_ERR;
 #if defined(__aarch64__)

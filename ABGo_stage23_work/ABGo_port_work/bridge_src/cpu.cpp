@@ -30,7 +30,16 @@ using Dynarmic::A32::Jit;
 using Dynarmic::A32::VAddr;
 
 constexpr size_t kMaxCpus = 128;
+
 constexpr uint32_t kStackSize = 2u << 20;
+
+static std::array<uint32_t, 5> g_crypto_watch_addresses{};
+static std::atomic<uint32_t> g_crypto_watch_mask{0};
+static std::atomic<bool> g_crypto_watch_active{false};
+static constexpr const char* kCryptoWatchNames[] = {
+    "SECOID_Init", "BL_Init", "RNG_RNGInit",
+    "sftk_fips_RSA_PowerUpSelfTest", "BLAPI_SHVerify"
+};
 
 Dynarmic::ExclusiveMonitor* g_monitor;
 std::mutex g_pid_mu;
@@ -79,7 +88,19 @@ struct Callbacks final : Dynarmic::A32::UserCallbacks {
                                            __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
     }
 
-    std::optional<uint32_t> MemoryReadCode(VAddr a) override { return rd<uint32_t>(a); }
+    std::optional<uint32_t> MemoryReadCode(VAddr a) override {
+        if (g_crypto_watch_active.load(std::memory_order_relaxed)) {
+            for (uint32_t i = 0; i < g_crypto_watch_addresses.size(); ++i) {
+                if (a == g_crypto_watch_addresses[i]) {
+                    const uint32_t bit = 1u << i;
+                    if ((g_crypto_watch_mask.fetch_or(bit) & bit) == 0)
+                        bridge_log("CRYPTO STARTUP: entered %s at 0x%08x", kCryptoWatchNames[i], a);
+                    break;
+                }
+            }
+        }
+        return rd<uint32_t>(a);
+    }
     uint8_t MemoryRead8(VAddr a) override { return rd<uint8_t>(a); }
     uint16_t MemoryRead16(VAddr a) override { return rd<uint16_t>(a); }
     uint32_t MemoryRead32(VAddr a) override { return rd<uint32_t>(a); }
@@ -249,6 +270,20 @@ Args& Args::d64(uint64_t v) {
     words.push_back(static_cast<uint32_t>(v));
     words.push_back(static_cast<uint32_t>(v >> 32));
     return *this;
+}
+
+void watch_abgo_crypto_startup(uint32_t bias) {
+    constexpr uint32_t offsets[] = {
+        0x00a458cc, 0x00a78844, 0x00a641dc, 0x00b004f0, 0x00bfd2ec
+    };
+    for (size_t i = 0; i < g_crypto_watch_addresses.size(); ++i)
+        g_crypto_watch_addresses[i] = bias + offsets[i];
+    g_crypto_watch_mask.store(0, std::memory_order_relaxed);
+    g_crypto_watch_active.store(true, std::memory_order_release);
+}
+
+void clear_abgo_crypto_startup_watch() {
+    g_crypto_watch_active.store(false, std::memory_order_release);
 }
 
 void init() {

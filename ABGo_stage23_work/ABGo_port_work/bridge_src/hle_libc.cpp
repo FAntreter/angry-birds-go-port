@@ -601,6 +601,18 @@ int32_t g_sysinfo(GPtr<uint8_t> out) {
     return 0;
 }
 int32_t g_system_property_get(GStr name, GPtr<char> value) { return __system_property_get(name.h(), value.h()); }
+int32_t g_getrandom(GPtr<void> buf, uint32_t len, uint32_t flags) {
+    bridge_log("RANDOM: getrandom import requested len=%u flags=0x%x", len, flags);
+#ifdef SYS_getrandom
+    long r = syscall(SYS_getrandom, buf.h(), static_cast<size_t>(len), flags);
+    bridge_log("RANDOM: getrandom import returned %ld errno=%d", r, r < 0 ? errno : 0);
+    return static_cast<int32_t>(r);
+#else
+    errno = ENOSYS;
+    bridge_log("RANDOM: host SYS_getrandom unavailable");
+    return -1;
+#endif
+}
 int32_t g_sched_yield() { return sched_yield(); }
 int32_t g_sigaction(int32_t, GPtr<const void>, GPtr<uint8_t> old) {
     if (old) memset(old.h(), 0, 16);
@@ -633,6 +645,18 @@ void g_syscall(cpu::Ctx& c) {
         struct timespec t;
         r = clock_gettime(static_cast<int>(c.arg(1)), &t);
         if (r == 0) *hp<GTimespec>(c.arg(2)) = {static_cast<int32_t>(t.tv_sec), static_cast<int32_t>(t.tv_nsec)};
+        break;
+    }
+    case 384: {                                      // getrandom (ARM EABI)
+        uint32_t len = c.arg(2), flags = c.arg(3);
+        bridge_log("RANDOM: syscall getrandom begin len=%u flags=0x%x", len, flags);
+#ifdef SYS_getrandom
+        r = syscall(SYS_getrandom, h(c.arg(1)), static_cast<size_t>(len), flags);
+#else
+        errno = ENOSYS;
+        r = -1;
+#endif
+        bridge_log("RANDOM: syscall getrandom end result=%ld errno=%d", r, r < 0 ? errno : 0);
         break;
     }
     case 240: {                                      // futex(uaddr, op, val, timeout, uaddr2, val3)
@@ -766,7 +790,7 @@ const hle::Def kDefs[] = {
     H("inet_ntop", g_inet_ntop), H("inet_pton", g_inet_pton), HE("gethostname", g_gethostname),
     H("getpid", g_getpid), H("getuid", g_getuid), H("geteuid", g_geteuid), H("getgid", g_getgid), H("getegid", g_getegid), H("getpwuid", g_getpwuid), H("getenv", g_getenv),
     H("setlocale", g_setlocale), H("sysconf", g_sysconf), H("getauxval", g_getauxval),
-    H("sysinfo", g_sysinfo), H("__system_property_get", g_system_property_get), H("sched_yield", g_sched_yield),
+    H("getrandom", g_getrandom), H("sysinfo", g_sysinfo), H("__system_property_get", g_system_property_get), H("sched_yield", g_sched_yield),
     H("sigaction", g_sigaction), H("sigprocmask", g_sigprocmask), HRAW("abort", g_abort), H("exit", g_exit),
     H("raise", g_raise), HRAW("__stack_chk_fail", g_stack_chk_fail), HRAW("syscall", g_syscall),
     H("dlopen", g_dlopen), H("dlsym", g_dlsym), H("dlclose", g_dlclose), H("dlerror", g_dlerror),

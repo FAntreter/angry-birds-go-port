@@ -33,12 +33,14 @@ constexpr size_t kMaxCpus = 128;
 
 constexpr uint32_t kStackSize = 2u << 20;
 
-static std::array<uint32_t, 5> g_crypto_watch_addresses{};
+static std::array<uint32_t, 10> g_crypto_watch_addresses{};
 static std::atomic<uint32_t> g_crypto_watch_mask{0};
 static std::atomic<bool> g_crypto_watch_active{false};
 static constexpr const char* kCryptoWatchNames[] = {
-    "SECOID_Init", "BL_Init", "RNG_RNGInit",
-    "sftk_fips_RSA_PowerUpSelfTest", "BLAPI_SHVerify"
+    "enter SECOID_Init", "enter BL_Init", "enter RNG_RNGInit",
+    "enter sftk_fips_RSA_PowerUpSelfTest", "enter BLAPI_SHVerify",
+    "return SECOID_Init", "return BL_Init", "return RNG_RNGInit",
+    "return sftk_fips_RSA_PowerUpSelfTest", "return BLAPI_SHVerify"
 };
 
 Dynarmic::ExclusiveMonitor* g_monitor;
@@ -273,8 +275,11 @@ Args& Args::d64(uint64_t v) {
 }
 
 void watch_abgo_crypto_startup(uint32_t bias) {
+    // Function entry points and the instruction immediately after each BL
+    // in sftk_startup_tests (libABK.so offset 0x00c88e8).
     constexpr uint32_t offsets[] = {
-        0x00a458cc, 0x00a78844, 0x00a641dc, 0x00b004f0, 0x00bfd2ec
+        0x00a458cc, 0x00a78844, 0x00a641dc, 0x00b004f0, 0x00bfd2ec,
+        0x00c8910, 0x00c891c, 0x00c8928, 0x00c8934, 0x00c8950
     };
     for (size_t i = 0; i < g_crypto_watch_addresses.size(); ++i)
         g_crypto_watch_addresses[i] = bias + offsets[i];

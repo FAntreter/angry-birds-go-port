@@ -14,6 +14,10 @@ namespace cpu {
 constexpr uint32_t kSvcReturn = 0xFFFF00;  // svc immediate that ends a host->guest call
 
 void init();
+// Log first execution entry into the five NSS/FIPS routines called by
+// libABK.so's sftk_startup_tests constructor. bias is the guest ELF load bias.
+void watch_abgo_crypto_startup(uint32_t bias);
+void clear_abgo_crypto_startup_watch();
 
 // View of the guest CPU that executed an import thunk.
 struct Ctx {

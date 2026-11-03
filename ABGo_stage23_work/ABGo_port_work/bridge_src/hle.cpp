@@ -8,6 +8,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <mutex>
+#include <signal.h>
+#include <sys/types.h>
 #include <unordered_map>
 #include <vector>
 
@@ -39,6 +41,42 @@ void append_crash_line(const char* line) {
         write(fd, "\n", 1); fsync(fd); close(fd);
     }
 }
+}
+namespace {
+void write_signal_number(int fd, int sig) {
+    char digits[16]; size_t n = 0; unsigned int v = static_cast<unsigned int>(sig);
+    do { digits[n++] = static_cast<char>('0' + (v % 10)); v /= 10; } while (v && n < sizeof digits);
+    while (n) { char c = digits[--n]; (void)write(fd, &c, 1); }
+}
+void crash_signal_handler(int sig, siginfo_t*, void*) {
+    static const char prefix[] = "FATAL SIGNAL: ";
+    const char* paths[] = { kCrashLog, "/sdcard/Download/abgo_bridge_crash.txt",
+                            "/storage/emulated/0/Download/abgo_bridge_crash.txt" };
+    for (const char* path : paths) {
+        int fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0660);
+        if (fd < 0) continue;
+        (void)write(fd, prefix, sizeof(prefix) - 1);
+        write_signal_number(fd, sig);
+        (void)write(fd, "\n", 1);
+        (void)close(fd);
+        break;
+    }
+    struct sigaction action{}; action.sa_handler = SIG_DFL; sigemptyset(&action.sa_mask);
+    (void)sigaction(sig, &action, nullptr);
+    (void)kill(getpid(), sig);
+    _exit(128 + sig);
+}
+}
+void install_crash_handlers() {
+    append_crash_line("=== Angry Birds Go bridge session ===");
+    struct sigaction action{}; action.sa_sigaction = crash_signal_handler;
+    sigemptyset(&action.sa_mask); action.sa_flags = SA_SIGINFO | SA_RESETHAND;
+    const int signals[] = { SIGABRT, SIGBUS, SIGFPE, SIGILL, SIGSEGV };
+    for (int sig : signals) {
+        if (sigaction(sig, &action, nullptr) != 0)
+            bridge_log("WARNING: could not install crash handler for signal %d", sig);
+    }
+    bridge_log("native crash handlers installed (SIGABRT/SIGBUS/SIGFPE/SIGILL/SIGSEGV)");
 }
 void bridge_log(const char* fmt, ...) {
     char buf[1024]; va_list ap; va_start(ap, fmt); vsnprintf(buf, sizeof buf, fmt, ap); va_end(ap);

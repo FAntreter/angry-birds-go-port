@@ -75,19 +75,31 @@ elf::Module* load_guest_tree(const std::string& soname, const std::string& filen
     if (!active.insert(soname).second)
         fatal("cyclic guest DT_NEEDED dependency at %s (two-phase loader required)", soname.c_str());
 
+    bridge_log("GUEST LOAD: begin %s from %s", soname.c_str(), filename.c_str());
     std::vector<uint8_t> image = read_file(own_dir() + "/" + filename);
     if (image.empty()) fatal("cannot read guest dependency %s (expected %s)", soname.c_str(), filename.c_str());
+    bridge_log("GUEST LOAD: read %s (%zu bytes)", soname.c_str(), image.size());
 
-    for (const std::string& dep : elf::needed(image.data(), image.size())) {
-        if (kHostLibraries.count(dep)) continue;
+    const auto dependencies = elf::needed(image.data(), image.size());
+    bridge_log("GUEST LOAD: %s has %zu DT_NEEDED entries", soname.c_str(), dependencies.size());
+    for (const std::string& dep : dependencies) {
+        if (kHostLibraries.count(dep)) {
+            bridge_log("GUEST LOAD: %s uses host dependency %s", soname.c_str(), dep.c_str());
+            continue;
+        }
         const std::string dep_file = guest_filename(dep);
+        bridge_log("GUEST LOAD: %s requires guest dependency %s", soname.c_str(), dep.c_str());
         load_guest_tree(dep, dep_file, loaded, active);
+        bridge_log("GUEST LOAD: dependency %s ready for %s", dep.c_str(), soname.c_str());
     }
 
+    bridge_log("GUEST LOAD: relocating/mapping %s", soname.c_str());
     elf::Module* module = elf::load(soname, image.data(), image.size());
     loaded.emplace(soname, module);
     active.erase(soname);
+    bridge_log("GUEST LOAD: running constructors for %s", soname.c_str());
     elf::run_init(module);
+    bridge_log("GUEST LOAD: complete %s", soname.c_str());
     return module;
 }
 

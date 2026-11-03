@@ -25,6 +25,8 @@ void append_crash_line(const char* line) {
     // available on devices that still honor the app's target SDK.
     const char* paths[] = {
         kCrashLog,
+        "/data/user/0/com.rovio.angrybirdsgo/files/abgo_bridge_crash.txt",
+        "/data/data/com.rovio.angrybirdsgo/files/abgo_bridge_crash.txt",
         "/sdcard/Download/abgo_bridge_crash.txt",
         "/storage/emulated/0/Download/abgo_bridge_crash.txt"
     };

@@ -159,6 +159,10 @@ void dispatch(uint32_t idx, cpu::Ctx& c) {
 
 void init() {
     register_libc();
+    const uint32_t getgid_addr = resolve("getgid");
+    bridge_log("HLE libc registration check: getgid=%s (0x%08x)",
+               getgid_addr ? "REGISTERED" : "MISSING", getgid_addr);
+    if (!getgid_addr) fatal("HLE initialization failed to register libc getgid");
     register_stdio();
     register_pthread();
     register_gles();

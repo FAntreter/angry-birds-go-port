@@ -211,8 +211,18 @@ Module* load(const std::string& name, const uint8_t* data, size_t size) {
 }
 
 void run_init(Module* m) {
-    if (m->init) cpu::call(m->init, {});
-    for (uint32_t f : m->init_array) cpu::call(f, {});
+    size_t index = 0;
+    if (m->init) {
+        bridge_log("CTOR: %s DT_INIT begin at 0x%08x", m->name.c_str(), m->init);
+        cpu::call(m->init, {});
+        bridge_log("CTOR: %s DT_INIT returned", m->name.c_str());
+    }
+    for (uint32_t f : m->init_array) {
+        bridge_log("CTOR: %s init_array[%zu] begin at 0x%08x", m->name.c_str(), index, f);
+        cpu::call(f, {});
+        bridge_log("CTOR: %s init_array[%zu] returned", m->name.c_str(), index);
+        ++index;
+    }
     LOGI("%s: ran %zu constructors", m->name.c_str(), m->init_array.size() + (m->init ? 1 : 0));
 }
 

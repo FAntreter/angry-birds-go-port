@@ -219,7 +219,13 @@ void run_init(Module* m) {
     }
     for (uint32_t f : m->init_array) {
         bridge_log("CTOR: %s init_array[%zu] begin at 0x%08x", m->name.c_str(), index, f);
+        const bool trace_crypto_startup = (m->name == "libABK.so" && index == 676);
+        if (trace_crypto_startup) {
+            bridge_log("CRYPTO STARTUP: tracing NSS/FIPS initialization calls");
+            cpu::watch_abgo_crypto_startup(m->bias);
+        }
         cpu::call(f, {});
+        if (trace_crypto_startup) cpu::clear_abgo_crypto_startup_watch();
         bridge_log("CTOR: %s init_array[%zu] returned", m->name.c_str(), index);
         ++index;
     }

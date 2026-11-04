@@ -126,19 +126,7 @@ struct Callbacks final : Dynarmic::A32::UserCallbacks {
     void InterpreterFallback(VAddr pc, size_t n) override;
     void CallSVC(uint32_t swi) override;
     void ExceptionRaised(VAddr pc, Dynarmic::A32::Exception e) override;
-    void AddTicks(uint64_t ticks) override {
-        if (!g_crypto_watch_active.load(std::memory_order_relaxed) || !owner || !owner->jit)
-            return;
-        const uint32_t pc = owner->jit->Regs()[15];
-        const uint32_t rng = g_crypto_watch_addresses[2];
-        if (rng && pc >= rng && pc < rng + 0x4000u) {
-            static std::atomic<uint32_t> execution_logs{0};
-            const uint32_t n = execution_logs.fetch_add(1, std::memory_order_relaxed);
-            if (n < 120)
-                bridge_log("CRYPTO EXEC: guest PC=0x%08x offset_from_RNG=0x%x ticks=%" PRIu64,
-                           pc, pc - rng, ticks);
-        }
-    }
+    void AddTicks(uint64_t ticks) override;
     uint64_t GetTicksRemaining() override { return ~uint64_t{0} >> 2; }
 };
 
@@ -171,6 +159,20 @@ struct GuestCpu {
         free_pid(pid);
     }
 };
+
+void Callbacks::AddTicks(uint64_t ticks) {
+    if (!g_crypto_watch_active.load(std::memory_order_relaxed) || !owner || !owner->jit)
+        return;
+    const uint32_t pc = owner->jit->Regs()[15];
+    const uint32_t rng = g_crypto_watch_addresses[2];
+    if (rng && pc >= rng && pc < rng + 0x4000u) {
+        static std::atomic<uint32_t> execution_logs{0};
+        const uint32_t n = execution_logs.fetch_add(1, std::memory_order_relaxed);
+        if (n < 120)
+            bridge_log("CRYPTO EXEC: guest PC=0x%08x offset_from_RNG=0x%x ticks=%" PRIu64,
+                       pc, pc - rng, ticks);
+    }
+}
 
 struct ThreadState {
     std::vector<std::unique_ptr<GuestCpu>> cpus;  // index = host->guest nesting depth

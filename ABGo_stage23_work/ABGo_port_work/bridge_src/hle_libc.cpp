@@ -647,6 +647,7 @@ void g_stack_chk_fail(cpu::Ctx& c) { fatal("guest stack smashing detected near %
 
 void g_syscall(cpu::Ctx& c) {
     int32_t nr = static_cast<int32_t>(c.arg(0));
+    bridge_log("SYSCALL: begin nr=%d a1=0x%x a2=0x%x a3=0x%x", nr, c.arg(1), c.arg(2), c.arg(3));
     long r;
     switch (nr) {
     case 20: r = getpid(); break;                    // getpid
@@ -687,6 +688,7 @@ void g_syscall(cpu::Ctx& c) {
         errno = ENOSYS;
         r = -1;
     }
+    bridge_log("SYSCALL: end nr=%d result=%ld errno=%d", nr, r, r < 0 ? errno : 0);
     if (r < 0) cpu::set_guest_errno(errno);
     c.ret(static_cast<uint32_t>(r));
 }

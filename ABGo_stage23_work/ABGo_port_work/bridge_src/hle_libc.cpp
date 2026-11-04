@@ -387,7 +387,7 @@ int32_t g_read(int32_t fd, GPtr<void> b, uint32_t n) {
     char target[PATH_MAX] = {};
     snprintf(fd_path, sizeof(fd_path), "/proc/self/fd/%d", fd);
     ssize_t target_len = readlink(fd_path, target, sizeof(target) - 1);
-    if (target_len >= 0) target[target_len] = '\\0';
+    if (target_len >= 0) target[target_len] = '\0';
     else snprintf(target, sizeof(target), "(readlink errno=%d)", errno);
     struct stat st = {};
     int stat_result = fstat(fd, &st);

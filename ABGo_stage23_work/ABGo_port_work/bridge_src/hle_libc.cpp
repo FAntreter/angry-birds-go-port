@@ -383,9 +383,19 @@ int32_t g_open(GStr path, int32_t flags, int32_t mode) {
 }
 int32_t g_close(int32_t fd) { return close(fd); }
 int32_t g_read(int32_t fd, GPtr<void> b, uint32_t n) {
-    bridge_log("IO: read begin fd=%d size=%u", fd, n);
+    char fd_path[64] = {};
+    char target[PATH_MAX] = {};
+    snprintf(fd_path, sizeof(fd_path), "/proc/self/fd/%d", fd);
+    ssize_t target_len = readlink(fd_path, target, sizeof(target) - 1);
+    if (target_len >= 0) target[target_len] = '\\0';
+    else snprintf(target, sizeof(target), "(readlink errno=%d)", errno);
+    struct stat st = {};
+    int stat_result = fstat(fd, &st);
+    bridge_log("IO: read begin fd=%d target=%s size=%u mode=0%o stat=%d", fd, target, n,
+               stat_result == 0 ? st.st_mode : 0, stat_result);
     int32_t result = static_cast<int32_t>(read(fd, b.h(), n));
-    bridge_log("IO: read end fd=%d result=%d errno=%d", fd, result, result < 0 ? errno : 0);
+    bridge_log("IO: read end fd=%d target=%s result=%d errno=%d", fd, target, result,
+               result < 0 ? errno : 0);
     return result;
 }
 int32_t g_write(int32_t fd, GPtr<const void> b, uint32_t n) { return static_cast<int32_t>(write(fd, b.h(), n)); }

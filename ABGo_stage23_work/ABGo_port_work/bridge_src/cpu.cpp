@@ -171,6 +171,22 @@ void Callbacks::AddTicks(uint64_t ticks) {
         if (n < 120)
             bridge_log("CRYPTO EXEC: guest PC=0x%08x offset_from_RNG=0x%x ticks=%" PRIu64,
                        pc, pc - rng, ticks);
+        // Capture the live register state around the rng_init block seen in
+        // device traces (rng_init + 0x230..0x260). AddTicks runs after a
+        // translated block, so this records the actual post-block state.
+        if (pc >= rng + 0x14f0u && pc < rng + 0x1580u) {
+            static std::atomic<uint32_t> rng_state_logs{0};
+            const uint32_t m = rng_state_logs.fetch_add(1, std::memory_order_relaxed);
+            if (m < 48) {
+                const auto& r = owner->jit->Regs();
+                bridge_log("CRYPTO STATE: pc=0x%08x off=0x%x cpsr=0x%08x ticks=%" PRIu64,
+                           r[15], r[15] - rng, owner->jit->Cpsr(), ticks);
+                bridge_log("CRYPTO STATE: r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x r6=%08x r7=%08x",
+                           r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]);
+                bridge_log("CRYPTO STATE: r8=%08x r9=%08x r10=%08x r11=%08x r12=%08x sp=%08x lr=%08x",
+                           r[8], r[9], r[10], r[11], r[12], r[13], r[14]);
+            }
+        }
     }
 }
 

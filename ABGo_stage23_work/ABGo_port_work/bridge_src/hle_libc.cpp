@@ -374,9 +374,20 @@ int32_t guest_open_flags(int f) {
     return r;
 }
 
-int32_t g_open(GStr path, int32_t flags, int32_t mode) { return open(path.h(), host_open_flags(flags), mode); }
+int32_t g_open(GStr path, int32_t flags, int32_t mode) {
+    const char* p = path.h();
+    bridge_log("IO: open begin path=%s flags=0x%x", p ? p : "(null)", flags);
+    int32_t fd = open(p, host_open_flags(flags), mode);
+    bridge_log("IO: open end path=%s fd=%d errno=%d", p ? p : "(null)", fd, fd < 0 ? errno : 0);
+    return fd;
+}
 int32_t g_close(int32_t fd) { return close(fd); }
-int32_t g_read(int32_t fd, GPtr<void> b, uint32_t n) { return static_cast<int32_t>(read(fd, b.h(), n)); }
+int32_t g_read(int32_t fd, GPtr<void> b, uint32_t n) {
+    bridge_log("IO: read begin fd=%d size=%u", fd, n);
+    int32_t result = static_cast<int32_t>(read(fd, b.h(), n));
+    bridge_log("IO: read end fd=%d result=%d errno=%d", fd, result, result < 0 ? errno : 0);
+    return result;
+}
 int32_t g_write(int32_t fd, GPtr<const void> b, uint32_t n) { return static_cast<int32_t>(write(fd, b.h(), n)); }
 int32_t g_lseek(int32_t fd, int32_t off, int32_t whence) { return static_cast<int32_t>(lseek(fd, off, whence)); }
 int32_t g_fsync(int32_t fd) { return fsync(fd); }

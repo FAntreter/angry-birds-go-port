@@ -36,6 +36,7 @@ constexpr uint32_t kStackSize = 2u << 20;
 static std::array<uint32_t, 10> g_crypto_watch_addresses{};
 static std::atomic<uint32_t> g_crypto_watch_mask{0};
 static std::atomic<bool> g_crypto_watch_active{false};
+static std::atomic<uint32_t> g_crypto_code_logs{0};
 static constexpr const char* kCryptoWatchNames[] = {
     "enter SECOID_Init", "enter BL_Init", "enter RNG_RNGInit",
     "enter sftk_fips_RSA_PowerUpSelfTest", "enter BLAPI_SHVerify",
@@ -92,6 +93,12 @@ struct Callbacks final : Dynarmic::A32::UserCallbacks {
 
     std::optional<uint32_t> MemoryReadCode(VAddr a) override {
         if (g_crypto_watch_active.load(std::memory_order_relaxed)) {
+            const uint32_t rng = g_crypto_watch_addresses[2];
+            if (rng && a >= rng && a < rng + 0x4000u) {
+                const uint32_t n = g_crypto_code_logs.fetch_add(1, std::memory_order_relaxed);
+                if (n < 160)
+                    bridge_log("CRYPTO CODE: translated guest PC=0x%08x offset=0x%x", a, a - rng);
+            }
             for (uint32_t i = 0; i < g_crypto_watch_addresses.size(); ++i) {
                 if (a == g_crypto_watch_addresses[i]) {
                     const uint32_t bit = 1u << i;
@@ -284,6 +291,7 @@ void watch_abgo_crypto_startup(uint32_t bias) {
     for (size_t i = 0; i < g_crypto_watch_addresses.size(); ++i)
         g_crypto_watch_addresses[i] = bias + offsets[i];
     g_crypto_watch_mask.store(0, std::memory_order_relaxed);
+    g_crypto_code_logs.store(0, std::memory_order_relaxed);
     g_crypto_watch_active.store(true, std::memory_order_release);
 }
 

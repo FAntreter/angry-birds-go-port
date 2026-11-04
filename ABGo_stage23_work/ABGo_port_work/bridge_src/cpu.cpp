@@ -91,6 +91,7 @@ struct Callbacks final : Dynarmic::A32::UserCallbacks {
                                            __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
     }
 
+    void LogCryptoTranslateState(VAddr a, uint32_t rng);
     std::optional<uint32_t> MemoryReadCode(VAddr a) override {
         if (g_crypto_watch_active.load(std::memory_order_relaxed)) {
             const uint32_t rng = g_crypto_watch_addresses[2];
@@ -98,15 +99,8 @@ struct Callbacks final : Dynarmic::A32::UserCallbacks {
                 const uint32_t n = g_crypto_code_logs.fetch_add(1, std::memory_order_relaxed);
                 if (n < 160) {
                     bridge_log("CRYPTO CODE: translated guest PC=0x%08x offset=0x%x", a, a - rng);
-                    if (a >= rng + 0x14f0u && a < rng + 0x1580u && owner && owner->jit) {
-                        const auto& r = owner->jit->Regs();
-                        bridge_log("CRYPTO TRANSLATE STATE: entry_pc=0x%08x code_pc=0x%08x cpsr=0x%08x",
-                                   r[15], a, owner->jit->Cpsr());
-                        bridge_log("CRYPTO TRANSLATE STATE: r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x r6=%08x r7=%08x",
-                                   r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]);
-                        bridge_log("CRYPTO TRANSLATE STATE: r8=%08x r9=%08x r10=%08x r11=%08x r12=%08x sp=%08x lr=%08x",
-                                   r[8], r[9], r[10], r[11], r[12], r[13], r[14]);
-                    }
+                    if (a >= rng + 0x14f0u && a < rng + 0x1580u)
+                        LogCryptoTranslateState(a, rng);
                 }
             }
             for (uint32_t i = 0; i < g_crypto_watch_addresses.size(); ++i) {
@@ -203,6 +197,18 @@ void Callbacks::AddTicks(uint64_t ticks) {
             }
         }
     }
+}
+
+void Callbacks::LogCryptoTranslateState(VAddr a, uint32_t rng) {
+    if (!owner || !owner->jit)
+        return;
+    const auto& r = owner->jit->Regs();
+    bridge_log("CRYPTO TRANSLATE STATE: entry_pc=0x%08x code_pc=0x%08x cpsr=0x%08x",
+               r[15], a, owner->jit->Cpsr());
+    bridge_log("CRYPTO TRANSLATE STATE: r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x r6=%08x r7=%08x",
+               r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]);
+    bridge_log("CRYPTO TRANSLATE STATE: r8=%08x r9=%08x r10=%08x r11=%08x r12=%08x sp=%08x lr=%08x",
+               r[8], r[9], r[10], r[11], r[12], r[13], r[14]);
 }
 
 struct ThreadState {

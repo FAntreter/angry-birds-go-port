@@ -34,9 +34,9 @@ hle = set(re.findall(r'\b(?:H|HE|HRAW)\("([^"\n]+)"\s*,', source))
 hle.update(re.findall(r'\badd_data\("([^"\n]+)"\s*,', source))
 # OpenSL ES IIDs are registered through names[] then add_data(names[i], ...).
 opensles = (ROOT / 'bridge_src' / 'hle_opensles.cpp').read_text(errors='ignore')
-iid_table = re.search(r'const char\\*\\s+names\\[\\]\\s*=\\s*\\{(.*?)\\};', opensles, re.S)
+iid_table = re.search(r'const char\*\s+names\[\]\s*=\s*\{(.*?)\};', opensles, re.S)
 if iid_table:
-    hle.update(re.findall(r'\"([^\"\\n]+)\"', iid_table.group(1)))
+    hle.update(re.findall(r'"([^"\n]+)"', iid_table.group(1)))
 libsyms = {p.name: symbols(p) for p in LIBS}
 all_guest_exports = set().union(*(defined for _, defined in libsyms.values()))
 rows=[]

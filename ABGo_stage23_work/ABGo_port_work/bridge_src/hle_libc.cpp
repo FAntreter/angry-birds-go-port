@@ -305,13 +305,13 @@ void g_android_log_assert(cpu::Ctx& c) {
     const char* fmt = hp<const char>(c.arg(2));
     __android_log_write(ANDROID_LOG_FATAL, tag ? tag : "guest",
                         cond && *cond ? cond : (fmt ? fmt : "assertion failed"));
-    c.ret(0);
+    std::abort();
 }
 int32_t g_mmap2(GPtr<void> addr, uint32_t len, int32_t prot, int32_t flags, int32_t fd, uint32_t page_off) {
     return static_cast<int32_t>(g_mmap(addr, len, prot, flags, fd, page_off << 12));
 }
 int32_t g_usleep(uint32_t usec) { return usleep(usec); }
-uint32_t g_get_h_errno() { static thread_local int e = 0; return g(&e); }
+uint32_t g_get_h_errno() { static thread_local uint32_t addr = arena::static_alloc(4, 4); return addr; }
 
 // ---------------------------------------------------------------- math (softfp: doubles in core register pairs)
 #define M1(n) double m_##n(double x) { return ::n(x); }

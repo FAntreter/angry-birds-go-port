@@ -103,20 +103,65 @@ uint32_t g_queue_callback(uint32_t self,uint32_t callback,uint32_t context) {
     std::lock_guard<std::mutex> l(o->state_mu); if(o->destroyed)return SL_RESULT_PARAMETER_INVALID;
     o->queue_callback=callback; o->queue_context=context; return SL_SUCCESS;
 }
-uint32_t g_volume_set(uint32_t self,int32_t mb) { Obj* o=find_obj(self); if(!o)return SL_RESULT_PARAMETER_INVALID; o->volume_millibel=mb; return SL_SUCCESS; }
-uint32_t g_volume_get(uint32_t self,GPtr<int32_t> out) { Obj* o=find_obj(self); if(!o||!out)return SL_RESULT_PARAMETER_INVALID; *out.h()=o->volume_millibel; return SL_SUCCESS; }
-uint32_t g_volume_mute(uint32_t self,uint32_t mute) { Obj* o=find_obj(self); if(!o)return SL_RESULT_PARAMETER_INVALID; o->muted=!!mute; return SL_SUCCESS; }
-uint32_t g_volume_get_mute(uint32_t self,GPtr<uint32_t> out) { Obj* o=find_obj(self); if(!o||!out)return SL_RESULT_PARAMETER_INVALID; *out.h()=o->muted; return SL_SUCCESS; }
-uint32_t g_volume_max(uint32_t self,GPtr<int32_t> out) { if(!find_obj(self)||!out)return SL_RESULT_PARAMETER_INVALID; *out.h()=0; return SL_SUCCESS; }
-uint32_t g_volume_stereo_enable(uint32_t self,uint32_t) { return find_obj(self)?SL_SUCCESS:SL_RESULT_PARAMETER_INVALID; }
-uint32_t g_volume_stereo_enabled(uint32_t self,GPtr<uint32_t> out) { if(!find_obj(self)||!out)return SL_RESULT_PARAMETER_INVALID; *out.h()=1; return SL_SUCCESS; }
-uint32_t g_volume_stereo_set(uint32_t self,uint32_t,int32_t) { return find_obj(self)?SL_SUCCESS:SL_RESULT_PARAMETER_INVALID; }
-uint32_t g_volume_stereo_get(uint32_t self,GPtr<int32_t> out,GPtr<uint32_t> enabled) { if(!find_obj(self)||!out||!enabled)return SL_RESULT_PARAMETER_INVALID; *out.h()=0; *enabled.h()=1; return SL_SUCCESS; }
-uint32_t g_noop_result(uint32_t self) { return find_obj(self)?SL_SUCCESS:SL_RESULT_PARAMETER_INVALID; }
-uint32_t g_noop_u32(uint32_t self,uint32_t) { return find_obj(self)?SL_SUCCESS:SL_RESULT_PARAMETER_INVALID; }
-uint32_t g_noop_out_u32(uint32_t self,GPtr<uint32_t> out) { if(!find_obj(self)||!out)return SL_RESULT_PARAMETER_INVALID; *out.h()=0; return SL_SUCCESS; }
-uint32_t g_engine_query_num(uint32_t self,GPtr<uint32_t> out) { if(!find_obj(self)||!out)return SL_RESULT_PARAMETER_INVALID; *out.h()=0; return SL_SUCCESS; }
-uint32_t g_engine_query_ifaces(uint32_t self,uint32_t,GPtr<uint32_t>) { return find_obj(self)?SL_SUCCESS:SL_RESULT_PARAMETER_INVALID; }
+uint32_t g_volume_set(uint32_t self,int32_t mb) {
+    Obj* o=find_obj(self); if(!o)return SL_RESULT_PARAMETER_INVALID;
+    std::lock_guard<std::mutex> l(o->state_mu); if(o->destroyed)return SL_RESULT_PARAMETER_INVALID;
+    o->volume_millibel=mb; return SL_SUCCESS;
+}
+uint32_t g_volume_get(uint32_t self,GPtr<int32_t> out) {
+    Obj* o=find_obj(self); if(!o||!out)return SL_RESULT_PARAMETER_INVALID;
+    std::lock_guard<std::mutex> l(o->state_mu); if(o->destroyed)return SL_RESULT_PARAMETER_INVALID;
+    *out.h()=o->volume_millibel; return SL_SUCCESS;
+}
+uint32_t g_volume_mute(uint32_t self,uint32_t mute) {
+    Obj* o=find_obj(self); if(!o)return SL_RESULT_PARAMETER_INVALID;
+    std::lock_guard<std::mutex> l(o->state_mu); if(o->destroyed)return SL_RESULT_PARAMETER_INVALID;
+    o->muted=!!mute; return SL_SUCCESS;
+}
+uint32_t g_volume_get_mute(uint32_t self,GPtr<uint32_t> out) {
+    Obj* o=find_obj(self); if(!o||!out)return SL_RESULT_PARAMETER_INVALID;
+    std::lock_guard<std::mutex> l(o->state_mu); if(o->destroyed)return SL_RESULT_PARAMETER_INVALID;
+    *out.h()=o->muted; return SL_SUCCESS;
+}
+uint32_t g_volume_max(uint32_t self,GPtr<int32_t> out) {
+    Obj* o=find_obj(self); if(!o||!out)return SL_RESULT_PARAMETER_INVALID;
+    std::lock_guard<std::mutex> l(o->state_mu); if(o->destroyed)return SL_RESULT_PARAMETER_INVALID;
+    *out.h()=0; return SL_SUCCESS;
+}
+uint32_t g_volume_stereo_enable(uint32_t self,uint32_t) {
+    Obj* o=find_obj(self); if(!o)return SL_RESULT_PARAMETER_INVALID;
+    std::lock_guard<std::mutex> l(o->state_mu); return o->destroyed?SL_RESULT_PARAMETER_INVALID:SL_SUCCESS;
+}
+uint32_t g_volume_stereo_enabled(uint32_t self,GPtr<uint32_t> out) {
+    Obj* o=find_obj(self); if(!o||!out)return SL_RESULT_PARAMETER_INVALID;
+    std::lock_guard<std::mutex> l(o->state_mu); if(o->destroyed)return SL_RESULT_PARAMETER_INVALID;
+    *out.h()=1; return SL_SUCCESS;
+}
+uint32_t g_volume_stereo_set(uint32_t self,uint32_t,int32_t) {
+    Obj* o=find_obj(self); if(!o)return SL_RESULT_PARAMETER_INVALID;
+    std::lock_guard<std::mutex> l(o->state_mu); return o->destroyed?SL_RESULT_PARAMETER_INVALID:SL_SUCCESS;
+}
+uint32_t g_volume_stereo_get(uint32_t self,GPtr<int32_t> out,GPtr<uint32_t> enabled) {
+    Obj* o=find_obj(self); if(!o||!out||!enabled)return SL_RESULT_PARAMETER_INVALID;
+    std::lock_guard<std::mutex> l(o->state_mu); if(o->destroyed)return SL_RESULT_PARAMETER_INVALID;
+    *out.h()=0; *enabled.h()=1; return SL_SUCCESS;
+}
+uint32_t g_noop_result(uint32_t self) {
+    Obj* o=find_obj(self); if(!o)return SL_RESULT_PARAMETER_INVALID;
+    std::lock_guard<std::mutex> l(o->state_mu); return o->destroyed?SL_RESULT_PARAMETER_INVALID:SL_SUCCESS;
+}
+uint32_t g_noop_u32(uint32_t self,uint32_t) { return g_noop_result(self); }
+uint32_t g_noop_out_u32(uint32_t self,GPtr<uint32_t> out) {
+    if(!out)return SL_RESULT_PARAMETER_INVALID;
+    uint32_t r=g_noop_result(self); if(r!=SL_SUCCESS)return r;
+    *out.h()=0; return SL_SUCCESS;
+}
+uint32_t g_engine_query_num(uint32_t self,GPtr<uint32_t> out) {
+    if(!out)return SL_RESULT_PARAMETER_INVALID;
+    uint32_t r=g_noop_result(self); if(r!=SL_SUCCESS)return r;
+    *out.h()=0; return SL_SUCCESS;
+}
+uint32_t g_engine_query_ifaces(uint32_t self,uint32_t,GPtr<uint32_t>) { return g_noop_result(self); }
 uint32_t g_sl_create_engine(GPtr<uint32_t> out,uint32_t,GPtr<void>,uint32_t,GPtr<uint32_t>,GPtr<uint32_t>) { return new_object(kEngine,out); }
 
 uint32_t thunk(const char* name, hle::Fn fn) { return hle::add(name,fn); }

@@ -197,7 +197,7 @@ Module* load(const std::string& name, const uint8_t* data, size_t size) {
             case R_ARM_NONE_: break;
             case R_ARM_RELATIVE_: *p += m->bias; break;
             case R_ARM_ABS32_: *p += sym_value(sym, type); break;
-            case R_ARM_REL32_: *p += sym_value(sym) - where; break;
+            case R_ARM_REL32_: *p += sym_value(sym, type) - where; break;
             case R_ARM_GLOB_DAT_:
             case R_ARM_JUMP_SLOT_: *p = sym_value(sym, type); break;
             default: fatal("%s: unsupported relocation type %u", name.c_str(), type);

@@ -14,6 +14,7 @@
 #include <signal.h>
 #include <sys/auxv.h>
 #include <sys/ioctl.h>
+#include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/statfs.h>
@@ -340,6 +341,7 @@ int32_t g_mmap2(GPtr<void> addr, uint32_t len, int32_t prot, int32_t flags, int3
     return static_cast<int32_t>(g_mmap(addr, len, prot, flags, fd, page_off << 12));
 }
 int32_t g_usleep(uint32_t usec) { return usleep(usec); }
+uint32_t g_sleep(uint32_t seconds) { return sleep(seconds); }
 uint32_t g_get_h_errno() { static thread_local uint32_t addr = arena::static_alloc(4, 4); return addr; }
 
 // ---------------------------------------------------------------- math (softfp: doubles in core register pairs)
@@ -441,6 +443,14 @@ int32_t g_utime(GStr path, GPtr<const int32_t> times) {
     struct utimbuf u{times.h()[0], times.h()[1]};
     return utime(path.h(), &u);
 }
+int32_t g_utimes(GStr path, GPtr<const GTimeval> times) {
+    if (!times) return utimes(path.h(), nullptr);
+    struct timeval tv[2] = {
+        {times.h()[0].sec, times.h()[0].usec},
+        {times.h()[1].sec, times.h()[1].usec}
+    };
+    return utimes(path.h(), tv);
+}
 
 // ---------------------------------------------------------------- file system
 int host_open_flags(int32_t f) {
@@ -488,6 +498,7 @@ int32_t g_write(int32_t fd, GPtr<const void> b, uint32_t n) { return static_cast
 int32_t g_lseek(int32_t fd, int32_t off, int32_t whence) { return static_cast<int32_t>(lseek(fd, off, whence)); }
 int64_t g_lseek64(int32_t fd, int64_t off, int32_t whence) { return static_cast<int64_t>(lseek(fd, static_cast<off_t>(off), whence)); }
 int32_t g_fsync(int32_t fd) { return fsync(fd); }
+int32_t g_flock(int32_t fd, int32_t operation) { return flock(fd, operation); }
 int32_t g_dup(int32_t fd) { return dup(fd); }
 int32_t g_dup2(int32_t oldfd, int32_t newfd) { return dup2(oldfd, newfd); }
 int32_t g_fchmod(int32_t fd, uint32_t mode) { return fchmod(fd, mode); }
@@ -620,6 +631,17 @@ int32_t g_readdir_r(uint32_t t, GPtr<uint8_t> entry, GPtr<uint32_t> result) {
     memcpy(entry.h(), e, sizeof(struct dirent));
     *result.h() = entry.a;
     return 0;
+}
+GPtr<uint8_t> g_readdir(uint32_t t) {
+    DIR* d = host_dir(t);
+    if (!d) { errno = EBADF; return {0}; }
+    static_assert(sizeof(struct dirent) == 280, "bionic dirent layout");
+    static thread_local uint32_t entry = arena::static_alloc(sizeof(struct dirent), 4);
+    errno = 0;
+    struct dirent* e = readdir(d);
+    if (!e) return {0};
+    memcpy(h(entry), e, sizeof(struct dirent));
+    return {entry};
 }
 
 // ---------------------------------------------------------------- sockets (sockaddr layouts are ABI-neutral)
@@ -900,20 +922,20 @@ const hle::Def kDefs[] = {
     H("time", g_time), HE("gettimeofday", g_gettimeofday), HE("clock_gettime", g_clock_gettime),
     HE("nanosleep", g_nanosleep), H("clock", g_clock), H("difftime", g_difftime), H("gmtime_r", g_gmtime_r),
     H("localtime_r", g_localtime_r), H("gmtime", g_gmtime), H("localtime", g_localtime), H("mktime", g_mktime),
-    H("strftime", g_strftime), H("wcsftime", g_wcsftime), HE("utime", g_utime),
+    H("strftime", g_strftime), H("wcsftime", g_wcsftime), HE("utime", g_utime), HE("utimes", g_utimes),
     HE("open", g_open), HE("close", g_close), HE("read", g_read), HE("write", g_write), HE("lseek", g_lseek), HE("lseek64", g_lseek64),
-    HE("fsync", g_fsync), HE("dup", g_dup), HE("dup2", g_dup2), HE("fchmod", g_fchmod), HE("fchown", g_fchown), HE("ftruncate", g_ftruncate), HE("chdir", g_chdir), HE("readlink", g_readlink), HE("gettid", g_gettid), HE("pipe", g_pipe), HE("poll", g_poll), HE("writev", g_writev), HE("access", g_access),
+    HE("fsync", g_fsync), HE("flock", g_flock), HE("dup", g_dup), HE("dup2", g_dup2), HE("fchmod", g_fchmod), HE("fchown", g_fchown), HE("ftruncate", g_ftruncate), HE("chdir", g_chdir), HE("readlink", g_readlink), HE("gettid", g_gettid), HE("pipe", g_pipe), HE("poll", g_poll), HE("writev", g_writev), HE("access", g_access),
     HE("chmod", g_chmod), HE("mkdir", g_mkdir), HE("rmdir", g_rmdir), HE("unlink", g_unlink),
     HE("remove", g_remove), HE("rename", g_rename), HE("pathconf", g_pathconf), HE("getcwd", g_getcwd),
     HE("fcntl", g_fcntl), HE("ioctl", g_ioctl), HE("stat", g_stat), HE("fstat", g_fstat), HE("statfs", g_statfs),
-    HE("opendir", g_opendir), HE("closedir", g_closedir), H("readdir_r", g_readdir_r),
+    HE("opendir", g_opendir), HE("closedir", g_closedir), H("readdir_r", g_readdir_r), H("readdir", g_readdir),
     HE("socket", g_socket), HE("bind", g_bind), HE("connect", g_connect), HE("getsockname", g_getsockname),
     HE("getpeername", g_getpeername), HE("send", g_send), HE("recv", g_recv), HE("recvfrom", g_recvfrom),
     HE("setsockopt", g_setsockopt), HE("getsockopt", g_getsockopt), H("inet_addr", g_inet_addr),
     H("inet_ntop", g_inet_ntop), H("inet_pton", g_inet_pton), HE("gethostname", g_gethostname),
     H("getpid", g_getpid), H("getuid", g_getuid), H("geteuid", g_geteuid), H("getgid", g_getgid), H("getegid", g_getegid), H("getpwuid", g_getpwuid), H("getenv", g_getenv),
     H("setlocale", g_setlocale), H("sysconf", g_sysconf), H("getauxval", g_getauxval),
-    H("getrandom", g_getrandom), H("sysinfo", g_sysinfo), H("usleep", g_usleep), H("get_h_errno", g_get_h_errno), H("__get_h_errno", g_get_h_errno), HE("__mmap2", g_mmap2), HRAW("qsort", g_qsort), HRAW("bsearch", g_bsearch), HRAW("__android_log_print", g_android_log_print), HRAW("__android_log_assert", g_android_log_assert), H("__system_property_get", g_system_property_get), H("sched_yield", g_sched_yield),
+    H("getrandom", g_getrandom), H("sysinfo", g_sysinfo), H("usleep", g_usleep), H("sleep", g_sleep), H("get_h_errno", g_get_h_errno), H("__get_h_errno", g_get_h_errno), HE("__mmap2", g_mmap2), HRAW("qsort", g_qsort), HRAW("bsearch", g_bsearch), HRAW("__android_log_print", g_android_log_print), HRAW("__android_log_assert", g_android_log_assert), H("__system_property_get", g_system_property_get), H("sched_yield", g_sched_yield),
     H("sigaction", g_sigaction), H("sigprocmask", g_sigprocmask), HRAW("abort", g_abort), H("exit", g_exit),
     H("raise", g_raise), HRAW("__stack_chk_fail", g_stack_chk_fail), HRAW("syscall", g_syscall),
     H("dlopen", g_dlopen), H("dlsym", g_dlsym), H("dlclose", g_dlclose), H("dlerror", g_dlerror),

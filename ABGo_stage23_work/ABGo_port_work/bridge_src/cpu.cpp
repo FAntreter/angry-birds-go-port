@@ -171,9 +171,13 @@ void Callbacks::AddTicks(uint64_t ticks) {
     const uint32_t rng = g_crypto_watch_addresses[2];
     static std::atomic<uint32_t> all_tick_logs{0};
     const uint32_t tick_n = all_tick_logs.fetch_add(1, std::memory_order_relaxed);
-    if (tick_n < 160)
-        bridge_log("CRYPTO TICK: post_block_pc=0x%08x cpsr=0x%08x ticks=%" PRIu64,
-                   pc, owner->jit->Cpsr(), ticks);
+    if (tick_n < 320) {
+        const auto& tr = owner->jit->Regs();
+        bridge_log("CRYPTO TICK: post_block_pc=0x%08x lr=0x%08x cpsr=0x%08x ticks=%" PRIu64
+                   " r0=0x%08x r1=0x%08x r2=0x%08x r3=0x%08x",
+                   pc, tr[14], owner->jit->Cpsr(), ticks,
+                   tr[0], tr[1], tr[2], tr[3]);
+    }
     if (rng && pc >= rng && pc < rng + 0x4000u) {
         static std::atomic<uint32_t> execution_logs{0};
         const uint32_t n = execution_logs.fetch_add(1, std::memory_order_relaxed);

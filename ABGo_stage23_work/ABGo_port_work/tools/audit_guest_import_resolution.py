@@ -70,11 +70,11 @@ for p in LIBS:
     report.append(', '.join(f'`{s}`' for s in names) if names else 'No unmatched names in this static comparison.')
     report.append('')
 report += ['## Interpretation and next actions','',
-           '1. Prioritize EGL and `ANativeWindow_setBuffersGeometry`: they are required for a real graphics path and cannot be replaced by arbitrary no-op thunks.',
-           '2. Resolve OpenSL ES IID data symbols and interface/vtable calls together; a function-name-only implementation is insufficient.',
-           '3. Audit C++ imports against the exact dependency export table and ELF symbol-version/visibility data before assuming `libSkynestSDK.so` will satisfy them.',
+           '1. The OpenSL ES IID names and bridge registrations are included in this audit; interface/vtable behavior still needs runtime validation.',
+           '2. Remaining unmatched names include libc, pthread, networking, process-control, and stdio symbols. Implement only functions with correct guest ABI and semantics; do not install generic no-op stubs for process or socket APIs.',
+           '3. Some names may be provided dynamically or through symbol-versioned dependencies; inspect ELF version tables and actual loader lookup scopes before treating every unmatched name as a fatal gap.',
            '4. Runtime loader diagnostics now report the importing module, symbol, and relocation type for unresolved imports; device validation is still required.',
-           '5. Compile with the Android NDK and validate the loader on device before estimating a playable milestone more confidently.', '',
+           '5. NDK compilation and static checks do not establish launchability. Install/launch and gameplay validation on the target Android device remain required.', '',
            '## Re-run', '`python3 tools/audit_guest_import_resolution.py`', '']
 path=ROOT/'reports'/'stage9_guest_import_resolution.md'
 path.write_text('\n'.join(report))

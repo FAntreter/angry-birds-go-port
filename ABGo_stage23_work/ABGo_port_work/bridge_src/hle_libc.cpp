@@ -95,6 +95,15 @@ GPtr<void> g_memrchr(GPtr<const void> s, int32_t c, uint32_t n) { return {n ? g(
 GPtr<void> g_memmem(GPtr<const void> a, uint32_t an, GPtr<const void> b, uint32_t bn) {
     return {g(memmem(a.h(), an, b.h(), bn))};
 }
+GPtr<void> g_memccpy(GPtr<void> d, GPtr<const void> s, int32_t c, uint32_t n) {
+    auto* dst = static_cast<unsigned char*>(d.h());
+    auto* src = static_cast<const unsigned char*>(s.h());
+    for (uint32_t i = 0; i < n; ++i) {
+        dst[i] = src[i];
+        if (src[i] == static_cast<unsigned char>(c)) return {d.a + i + 1};
+    }
+    return {0};
+}
 uint32_t g_strlen(GStr s) { return static_cast<uint32_t>(strlen(s.h())); }
 uint32_t g_strnlen(GStr s, uint32_t n) { return static_cast<uint32_t>(strnlen(s.h(), n)); }
 GPtr<char> g_strtok(GPtr<char> s, GStr delim) { return {g(strtok(s ? s.h() : nullptr, delim.h()))}; }
@@ -107,6 +116,15 @@ int32_t g_strncasecmp(GStr a, GStr b, uint32_t n) { return strncasecmp(a.h(), b.
 int32_t g_strcoll(GStr a, GStr b) { return strcoll(a.h(), b.h()); }
 uint32_t g_strxfrm(GPtr<char> d, GStr s, uint32_t n) { return static_cast<uint32_t>(strxfrm(d.h(), s.h(), n)); }
 GPtr<char> g_strcpy(GPtr<char> d, GStr s) { strcpy(d.h(), s.h()); return d; }
+uint32_t g_strlcpy(GPtr<char> d, GStr s, uint32_t n) {
+    const size_t len = strlen(s.h());
+    if (n) {
+        const size_t copy = std::min(len, static_cast<size_t>(n - 1));
+        if (copy) memcpy(d.h(), s.h(), copy);
+        d.h()[copy] = '\0';
+    }
+    return static_cast<uint32_t>(len);
+}
 GPtr<char> g_strncpy(GPtr<char> d, GStr s, uint32_t n) { strncpy(d.h(), s.h(), n); return d; }
 GPtr<char> g_strcat(GPtr<char> d, GStr s) { strcat(d.h(), s.h()); return d; }
 GPtr<char> g_strncat(GPtr<char> d, GStr s, uint32_t n) { strncat(d.h(), s.h(), n); return d; }
@@ -468,8 +486,22 @@ int32_t g_read(int32_t fd, GPtr<void> b, uint32_t n) {
 }
 int32_t g_write(int32_t fd, GPtr<const void> b, uint32_t n) { return static_cast<int32_t>(write(fd, b.h(), n)); }
 int32_t g_lseek(int32_t fd, int32_t off, int32_t whence) { return static_cast<int32_t>(lseek(fd, off, whence)); }
+int64_t g_lseek64(int32_t fd, int64_t off, int32_t whence) { return static_cast<int64_t>(lseek(fd, static_cast<off_t>(off), whence)); }
 int32_t g_fsync(int32_t fd) { return fsync(fd); }
 int32_t g_dup(int32_t fd) { return dup(fd); }
+int32_t g_dup2(int32_t oldfd, int32_t newfd) { return dup2(oldfd, newfd); }
+int32_t g_fchmod(int32_t fd, uint32_t mode) { return fchmod(fd, mode); }
+int32_t g_fchown(int32_t fd, uint32_t owner, uint32_t group) { return fchown(fd, owner, group); }
+int32_t g_ftruncate(int32_t fd, int64_t length) { return ftruncate(fd, static_cast<off_t>(length)); }
+int32_t g_chdir(GStr path) { return chdir(path.h()); }
+int32_t g_readlink(GStr path, GPtr<char> buf, uint32_t size) { return static_cast<int32_t>(readlink(path.h(), buf.h(), size)); }
+int32_t g_gettid() {
+#ifdef SYS_gettid
+    return static_cast<int32_t>(syscall(SYS_gettid));
+#else
+    return -1;
+#endif
+}
 int32_t g_pipe(GPtr<int32_t> fds) { return pipe(reinterpret_cast<int*>(fds.h())); }
 int32_t g_poll(GPtr<struct pollfd> fds, uint32_t n, int32_t timeout) { return poll(fds.h(), n, timeout); }
 int32_t g_writev(int32_t fd, GPtr<const uint32_t> iov, int32_t cnt) {
@@ -844,11 +876,11 @@ const hle::Def kDefs[] = {
     H("malloc", g_malloc), H("memalign", g_memalign), H("calloc", g_calloc), H("realloc", g_realloc), H("free", g_free),
     HE("mmap", g_mmap), H("munmap", g_munmap),
     H("memcpy", g_memcpy), H("memmove", g_memmove), H("memset", g_memset), H("memcmp", g_memcmp),
-    H("memchr", g_memchr), H("memrchr", g_memrchr), H("memmem", g_memmem),
+    H("memchr", g_memchr), H("memrchr", g_memrchr), H("memmem", g_memmem), H("memccpy", g_memccpy),
     H("__aeabi_memcpy", g_memcpy), H("__aeabi_memmove", g_memmove), H("__aeabi_memset", g_aeabi_memset),
     H("strlen", g_strlen), H("strnlen", g_strnlen), H("strtok", g_strtok), H("isspace", g_isspace), H("isalnum", g_isalnum), H("strcmp", g_strcmp), H("strncmp", g_strncmp), H("strcasecmp", g_strcasecmp),
     H("strncasecmp", g_strncasecmp), H("strcoll", g_strcoll), H("strxfrm", g_strxfrm), H("strcpy", g_strcpy),
-    H("strncpy", g_strncpy), H("strcat", g_strcat), H("strncat", g_strncat), H("strchr", g_strchr),
+    H("strncpy", g_strncpy), H("strlcpy", g_strlcpy), H("strcat", g_strcat), H("strncat", g_strncat), H("strchr", g_strchr),
     H("strrchr", g_strrchr), H("strstr", g_strstr), H("strpbrk", g_strpbrk), H("strcspn", g_strcspn),
     H("strdup", g_strdup), H("strtok_r", g_strtok_r), H("strerror", g_strerror), H("strerror_r", g_strerror_r),
     H("basename", g_basename), H("fnmatch", g_fnmatch),
@@ -869,8 +901,8 @@ const hle::Def kDefs[] = {
     HE("nanosleep", g_nanosleep), H("clock", g_clock), H("difftime", g_difftime), H("gmtime_r", g_gmtime_r),
     H("localtime_r", g_localtime_r), H("gmtime", g_gmtime), H("localtime", g_localtime), H("mktime", g_mktime),
     H("strftime", g_strftime), H("wcsftime", g_wcsftime), HE("utime", g_utime),
-    HE("open", g_open), HE("close", g_close), HE("read", g_read), HE("write", g_write), HE("lseek", g_lseek),
-    HE("fsync", g_fsync), HE("dup", g_dup), HE("pipe", g_pipe), HE("poll", g_poll), HE("writev", g_writev), HE("access", g_access),
+    HE("open", g_open), HE("close", g_close), HE("read", g_read), HE("write", g_write), HE("lseek", g_lseek), HE("lseek64", g_lseek64),
+    HE("fsync", g_fsync), HE("dup", g_dup), HE("dup2", g_dup2), HE("fchmod", g_fchmod), HE("fchown", g_fchown), HE("ftruncate", g_ftruncate), HE("chdir", g_chdir), HE("readlink", g_readlink), HE("gettid", g_gettid), HE("pipe", g_pipe), HE("poll", g_poll), HE("writev", g_writev), HE("access", g_access),
     HE("chmod", g_chmod), HE("mkdir", g_mkdir), HE("rmdir", g_rmdir), HE("unlink", g_unlink),
     HE("remove", g_remove), HE("rename", g_rename), HE("pathconf", g_pathconf), HE("getcwd", g_getcwd),
     HE("fcntl", g_fcntl), HE("ioctl", g_ioctl), HE("stat", g_stat), HE("fstat", g_fstat), HE("statfs", g_statfs),

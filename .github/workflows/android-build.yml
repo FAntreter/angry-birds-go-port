@@ -37,6 +37,9 @@ jobs:
             python3 "$f"
           done
 
+      - name: Generate current ARM32 import-resolution audit
+        run: python3 tools/audit_guest_import_resolution.py
+
       - name: Build Android ARM64 bridge
         run: bash scripts/build_android.sh
 
@@ -48,4 +51,11 @@ jobs:
         with:
           name: AngryBirdsGoBridge-arm64-v8a
           path: ABGo_stage23_work/ABGo_port_work/build-android-arm64/*.so
+          if-no-files-found: error
+
+      - name: Upload current import audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: AngryBirdsGo-import-audit
+          path: ABGo_stage23_work/ABGo_port_work/reports/stage9_guest_import_resolution.md
           if-no-files-found: error

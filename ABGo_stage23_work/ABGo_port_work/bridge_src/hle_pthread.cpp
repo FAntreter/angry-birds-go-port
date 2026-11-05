@@ -320,7 +320,9 @@ int32_t g_pthread_create(GPtr<uint32_t> out, GPtr<const uint32_t> attr, uint32_t
     }
     pthread_attr_t a;
     pthread_attr_init(&a);
-    pthread_attr_setstacksize(&a, 512 * 1024);  // host side only runs the JIT loop and imports
+    size_t host_stack = attr && attr.h()[1] ? attr.h()[1] : 512 * 1024;
+    if (host_stack < static_cast<size_t>(PTHREAD_STACK_MIN)) host_stack = PTHREAD_STACK_MIN;
+    pthread_attr_setstacksize(&a, host_stack);  // guest-requested size, clamped to host minimum
     if (attr && (attr.h()[0] & 1)) pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
     *out.h() = t->id;
     int r = pthread_create(&t->host, &a, thread_main, new std::shared_ptr<GThread>(t));

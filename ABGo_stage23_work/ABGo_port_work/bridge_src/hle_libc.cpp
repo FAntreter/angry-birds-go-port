@@ -266,6 +266,51 @@ void g_sscanf(cpu::Ctx& c) {
     c.ret(static_cast<uint32_t>(r));
 }
 
+// ---------------------------------------------------------------- guest callbacks and Android logging
+void g_qsort(cpu::Ctx& c) {
+    uint32_t base = c.arg(0), count = c.arg(1), width = c.arg(2), compare = c.arg(3);
+    if (!base || !compare || !width || count < 2) { c.ret(0); return; }
+    char* p = hp<char>(base);
+    std::sort(p, p + size_t{count} * width, [=](const char* a, const char* b) {
+        return static_cast<int32_t>(cpu::call(compare, {g(a), g(b)})) < 0;
+    });
+    c.ret(0);
+}
+void g_bsearch(cpu::Ctx& c) {
+    uint32_t key = c.arg(0), base = c.arg(1), count = c.arg(2), width = c.arg(3), compare = c.arg(4);
+    if (!key || !base || !compare || !width) { c.ret(0); return; }
+    uint32_t lo = 0, hi = count;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        uint32_t item = base + mid * width;
+        int32_t order = static_cast<int32_t>(cpu::call(compare, {key, item}));
+        if (order < 0) hi = mid;
+        else if (order > 0) lo = mid + 1;
+        else { c.ret(item); return; }
+    }
+    c.ret(0);
+}
+void g_android_log_print(cpu::Ctx& c) {
+    int32_t prio = static_cast<int32_t>(c.arg(0));
+    const char* tag = hp<const char>(c.arg(1));
+    const char* fmt = hp<const char>(c.arg(2));
+    __android_log_write(prio, tag ? tag : "guest", fmt ? fmt : "");
+    c.ret(0);
+}
+void g_android_log_assert(cpu::Ctx& c) {
+    const char* cond = hp<const char>(c.arg(0));
+    const char* tag = hp<const char>(c.arg(1));
+    const char* fmt = hp<const char>(c.arg(2));
+    __android_log_write(ANDROID_LOG_FATAL, tag ? tag : "guest",
+                        cond && *cond ? cond : (fmt ? fmt : "assertion failed"));
+    c.ret(0);
+}
+int32_t g_mmap2(GPtr<void> addr, uint32_t len, int32_t prot, int32_t flags, int32_t fd, uint32_t page_off) {
+    return static_cast<int32_t>(g_mmap(addr, len, prot, flags, fd, page_off << 12));
+}
+int32_t g_usleep(uint32_t usec) { return usleep(usec); }
+uint32_t g_get_h_errno() { static thread_local int e = 0; return g(&e); }
+
 // ---------------------------------------------------------------- math (softfp: doubles in core register pairs)
 #define M1(n) double m_##n(double x) { return ::n(x); }
 #define M1F(n) float m_##n(float x) { return ::n(x); }
@@ -803,7 +848,7 @@ const hle::Def kDefs[] = {
     H("acos", m_acos), H("asin", m_asin), H("atan", m_atan), H("ceil", m_ceil), H("cos", m_cos), H("cosh", m_cosh),
     H("exp", m_exp), H("floor", m_floor), H("log", m_log), H("log10", m_log10), H("rint", m_rint), H("sin", m_sin),
     H("sinh", m_sinh), H("sqrt", m_sqrt), H("tan", m_tan), H("tanh", m_tanh), H("trunc", m_trunc),
-    H("ceilf", m_ceilf), H("cosf", m_cosf), H("floorf", m_floorf), H("sinf", m_sinf), H("sqrtf", m_sqrtf),
+    H("acosf", m_acosf), H("asinf", m_asinf), H("atanf", m_atanf), H("expf", m_expf), H("fabsf", m_fabsf), H("logf", m_logf), H("ceilf", m_ceilf), H("cosf", m_cosf), H("floorf", m_floorf), H("sinf", m_sinf), H("sqrtf", m_sqrtf),
     H("tanf", m_tanf), H("__isinf", m_isinf), H("lrint", m_lrint), H("atan2", m_atan2), H("fmod", m_fmod), H("pow", m_pow), H("atan2f", m_atan2f),
     H("fmodf", m_fmodf), H("powf", m_powf), H("ldexp", m_ldexp), H("frexp", m_frexp), H("modf", m_modf),
     H("isnan", m_isnan), H("lrand48", g_lrand48), H("srand48", g_srand48),
@@ -823,7 +868,7 @@ const hle::Def kDefs[] = {
     H("inet_ntop", g_inet_ntop), H("inet_pton", g_inet_pton), HE("gethostname", g_gethostname),
     H("getpid", g_getpid), H("getuid", g_getuid), H("geteuid", g_geteuid), H("getgid", g_getgid), H("getegid", g_getegid), H("getpwuid", g_getpwuid), H("getenv", g_getenv),
     H("setlocale", g_setlocale), H("sysconf", g_sysconf), H("getauxval", g_getauxval),
-    H("getrandom", g_getrandom), H("sysinfo", g_sysinfo), H("__system_property_get", g_system_property_get), H("sched_yield", g_sched_yield),
+    H("getrandom", g_getrandom), H("sysinfo", g_sysinfo), H("usleep", g_usleep), H("get_h_errno", g_get_h_errno), H("__get_h_errno", g_get_h_errno), HE("__mmap2", g_mmap2), HRAW("qsort", g_qsort), HRAW("bsearch", g_bsearch), HRAW("__android_log_print", g_android_log_print), HRAW("__android_log_assert", g_android_log_assert), H("__system_property_get", g_system_property_get), H("sched_yield", g_sched_yield),
     H("sigaction", g_sigaction), H("sigprocmask", g_sigprocmask), HRAW("abort", g_abort), H("exit", g_exit),
     H("raise", g_raise), HRAW("__stack_chk_fail", g_stack_chk_fail), HRAW("syscall", g_syscall),
     H("dlopen", g_dlopen), H("dlsym", g_dlsym), H("dlclose", g_dlclose), H("dlerror", g_dlerror),

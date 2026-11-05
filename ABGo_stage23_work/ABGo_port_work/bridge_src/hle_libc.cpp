@@ -14,6 +14,8 @@
 #include <signal.h>
 #include <sys/auxv.h>
 #include <sys/ioctl.h>
+#include <sys/resource.h>
+#include <sys/utsname.h>
 #include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -498,6 +500,38 @@ int32_t g_write(int32_t fd, GPtr<const void> b, uint32_t n) { return static_cast
 int32_t g_lseek(int32_t fd, int32_t off, int32_t whence) { return static_cast<int32_t>(lseek(fd, off, whence)); }
 int64_t g_lseek64(int32_t fd, int64_t off, int32_t whence) { return static_cast<int64_t>(lseek(fd, static_cast<off_t>(off), whence)); }
 int32_t g_fsync(int32_t fd) { return fsync(fd); }
+struct GuestRlimit { uint32_t cur, max; };
+int32_t g_getrlimit(int32_t resource, GPtr<GuestRlimit> out) {
+    struct rlimit host{};
+    if (getrlimit(resource, &host) != 0) return -1;
+    constexpr rlim_t kGuestInfinity = 0xffffffffu;
+    out.h()->cur = host.rlim_cur == RLIM_INFINITY || host.rlim_cur > kGuestInfinity
+        ? static_cast<uint32_t>(kGuestInfinity) : static_cast<uint32_t>(host.rlim_cur);
+    out.h()->max = host.rlim_max == RLIM_INFINITY || host.rlim_max > kGuestInfinity
+        ? static_cast<uint32_t>(kGuestInfinity) : static_cast<uint32_t>(host.rlim_max);
+    return 0;
+}
+int32_t g_setrlimit(int32_t resource, GPtr<const GuestRlimit> in) {
+    constexpr uint32_t kGuestInfinity = 0xffffffffu;
+    struct rlimit host{};
+    host.rlim_cur = in.h()->cur == kGuestInfinity ? RLIM_INFINITY : in.h()->cur;
+    host.rlim_max = in.h()->max == kGuestInfinity ? RLIM_INFINITY : in.h()->max;
+    return setrlimit(resource, &host);
+}
+int32_t g_uname(GPtr<uint8_t> out) {
+    struct utsname host{};
+    if (uname(&host) != 0) return -1;
+    // ARM32 bionic utsname: six fixed 65-byte NUL-terminated fields.
+    static_assert(sizeof(host.sysname) == 65, "unexpected host utsname field size");
+    uint8_t* p = out.h();
+    memcpy(p + 0, host.sysname, 65);
+    memcpy(p + 65, host.nodename, 65);
+    memcpy(p + 130, host.release, 65);
+    memcpy(p + 195, host.version, 65);
+    memcpy(p + 260, host.machine, 65);
+    memcpy(p + 325, host.domainname, 65);
+    return 0;
+}
 int32_t g_flock(int32_t fd, int32_t operation) { return flock(fd, operation); }
 int32_t g_dup(int32_t fd) { return dup(fd); }
 int32_t g_dup2(int32_t oldfd, int32_t newfd) { return dup2(oldfd, newfd); }
@@ -924,7 +958,7 @@ const hle::Def kDefs[] = {
     H("localtime_r", g_localtime_r), H("gmtime", g_gmtime), H("localtime", g_localtime), H("mktime", g_mktime),
     H("strftime", g_strftime), H("wcsftime", g_wcsftime), HE("utime", g_utime), HE("utimes", g_utimes),
     HE("open", g_open), HE("close", g_close), HE("read", g_read), HE("write", g_write), HE("lseek", g_lseek), HE("lseek64", g_lseek64),
-    HE("fsync", g_fsync), HE("flock", g_flock), HE("dup", g_dup), HE("dup2", g_dup2), HE("fchmod", g_fchmod), HE("fchown", g_fchown), HE("ftruncate", g_ftruncate), HE("chdir", g_chdir), HE("readlink", g_readlink), HE("gettid", g_gettid), HE("pipe", g_pipe), HE("poll", g_poll), HE("writev", g_writev), HE("access", g_access),
+    HE("fsync", g_fsync), HE("getrlimit", g_getrlimit), HE("setrlimit", g_setrlimit), HE("uname", g_uname), HE("flock", g_flock), HE("dup", g_dup), HE("dup2", g_dup2), HE("fchmod", g_fchmod), HE("fchown", g_fchown), HE("ftruncate", g_ftruncate), HE("chdir", g_chdir), HE("readlink", g_readlink), HE("gettid", g_gettid), HE("pipe", g_pipe), HE("poll", g_poll), HE("writev", g_writev), HE("access", g_access),
     HE("chmod", g_chmod), HE("mkdir", g_mkdir), HE("rmdir", g_rmdir), HE("unlink", g_unlink),
     HE("remove", g_remove), HE("rename", g_rename), HE("pathconf", g_pathconf), HE("getcwd", g_getcwd),
     HE("fcntl", g_fcntl), HE("ioctl", g_ioctl), HE("stat", g_stat), HE("fstat", g_fstat), HE("statfs", g_statfs),

@@ -273,9 +273,20 @@ void g_qsort(cpu::Ctx& c) {
     uint32_t base = c.arg(0), count = c.arg(1), width = c.arg(2), compare = c.arg(3);
     if (!base || !compare || !width || count < 2) { c.ret(0); return; }
     char* p = hp<char>(base);
-    std::sort(p, p + size_t{count} * width, [=](const char* a, const char* b) {
-        return static_cast<int32_t>(cpu::call(compare, {g(a), g(b)})) < 0;
+    // Sort element indices so the guest comparator receives pointers to intact
+    // guest objects; sorting a flat char range would compare individual bytes.
+    std::vector<uint32_t> order(count);
+    for (uint32_t i = 0; i < count; ++i) order[i] = i;
+    std::sort(order.begin(), order.end(), [=](uint32_t a, uint32_t b) {
+        uint32_t ga = base + a * width;
+        uint32_t gb = base + b * width;
+        return static_cast<int32_t>(cpu::call(compare, {ga, gb})) < 0;
     });
+    std::vector<char> sorted(size_t{count} * width);
+    for (uint32_t i = 0; i < count; ++i) {
+        memcpy(sorted.data() + size_t{i} * width, p + size_t{order[i]} * width, width);
+    }
+    memcpy(p, sorted.data(), sorted.size());
     c.ret(0);
 }
 void g_bsearch(cpu::Ctx& c) {

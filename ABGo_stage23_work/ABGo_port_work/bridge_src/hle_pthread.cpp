@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include <array>
+#include <cstring>
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -287,6 +288,27 @@ void* thread_main(void* p) {
     return nullptr;
 }
 
+int32_t g_attr_init(GPtr<uint32_t> attr) {
+    if (!attr) return EINVAL;
+    memset(attr.h(), 0, 36);
+    return 0;
+}
+int32_t g_attr_destroy(GPtr<uint32_t>) { return 0; }
+int32_t g_attr_setdetachstate(GPtr<uint32_t> attr, int32_t state) {
+    if (!attr || (state != PTHREAD_CREATE_JOINABLE && state != PTHREAD_CREATE_DETACHED)) return EINVAL;
+    attr.h()[0] = (attr.h()[0] & ~1u) | (state == PTHREAD_CREATE_DETACHED ? 1u : 0u);
+    return 0;
+}
+int32_t g_attr_setstacksize(GPtr<uint32_t> attr, uint32_t size) {
+    if (!attr || size < static_cast<uint32_t>(PTHREAD_STACK_MIN)) return EINVAL;
+    attr.h()[1] = size;
+    return 0;
+}
+int32_t g_attr_getstacksize(GPtr<const uint32_t> attr, GPtr<uint32_t> size) {
+    if (!attr || !size) return EINVAL;
+    *size.h() = attr.h()[1];
+    return 0;
+}
 int32_t g_pthread_create(GPtr<uint32_t> out, GPtr<const uint32_t> attr, uint32_t start, uint32_t arg) {
     auto t = std::make_shared<GThread>();
     t->start = start;
@@ -363,6 +385,9 @@ const hle::Def kDefs[] = {
     H("pthread_rwlock_unlock", g_rwlock_unlock),
     H("pthread_key_create", g_key_create), H("pthread_key_delete", g_key_delete),
     H("pthread_getspecific", g_getspecific), H("pthread_setspecific", g_setspecific),
+    H("pthread_attr_init", g_attr_init), H("pthread_attr_destroy", g_attr_destroy),
+    H("pthread_attr_setdetachstate", g_attr_setdetachstate), H("pthread_attr_setstacksize", g_attr_setstacksize),
+    H("pthread_attr_getstacksize", g_attr_getstacksize),
     H("pthread_create", g_pthread_create), H("pthread_join", g_pthread_join), H("pthread_detach", g_pthread_detach),
     H("pthread_once", g_pthread_once),
     H("pthread_self", g_pthread_self), H("pthread_equal", g_pthread_equal),

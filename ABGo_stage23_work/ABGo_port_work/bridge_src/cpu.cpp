@@ -394,7 +394,38 @@ uint64_t call(uint32_t fn, const std::vector<uint32_t>& words) {
 
     c.returned = false;
     ++t.depth;
-    c.jit->Run();
+    const uint32_t watched_rng = g_crypto_watch_addresses[2];
+    if (g_crypto_watch_active.load(std::memory_order_relaxed) &&
+        watched_rng != 0 && (fn & ~1u) == watched_rng) {
+        // Step only the RNG init function so we can observe the exact guest
+        // instruction that stops progressing. Calling Step() from outside Run()
+        // avoids relying on post-block callbacks for this diagnostic.
+        uint32_t steps = 0;
+        while (!c.returned && steps < 250000u) {
+            const uint32_t before_pc = R[15];
+            const uint32_t before_cpsr = c.jit->Cpsr();
+            const bool thumb = (before_cpsr & 0x20u) != 0;
+            const uint32_t instruction = thumb
+                ? static_cast<uint32_t>(*reinterpret_cast<uint16_t*>(arena::base + (before_pc & ~1u)))
+                : rd<uint32_t>(before_pc & ~3u);
+            c.jit->Step();
+            ++steps;
+            if (before_pc >= watched_rng + 0x14d0u &&
+                before_pc < watched_rng + 0x1560u) {
+                const auto& sr = c.jit->Regs();
+                bridge_log("CRYPTO STEP: n=%u pc=0x%08x insn=0x%08x next=0x%08x cpsr=0x%08x",
+                           steps, before_pc, instruction, sr[15], c.jit->Cpsr());
+                bridge_log("CRYPTO STEP REG: r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x r6=%08x r7=%08x",
+                           sr[0], sr[1], sr[2], sr[3], sr[4], sr[5], sr[6], sr[7]);
+                bridge_log("CRYPTO STEP REG: r8=%08x r9=%08x r10=%08x r11=%08x r12=%08x sp=%08x lr=%08x",
+                           sr[8], sr[9], sr[10], sr[11], sr[12], sr[13], sr[14]);
+            }
+        }
+        bridge_log("CRYPTO STEP END: steps=%u returned=%d pc=0x%08x",
+                   steps, c.returned ? 1 : 0, R[15]);
+    } else {
+        c.jit->Run();
+    }
     --t.depth;
     if (!c.returned) dump_and_die(c.jit.get(), "guest call halted without returning");
     c.jit->ClearHalt(Dynarmic::HaltReason::UserDefined1);

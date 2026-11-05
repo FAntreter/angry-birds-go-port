@@ -441,6 +441,14 @@ uint64_t call(uint32_t fn, const std::vector<uint32_t>& words) {
                            sr[8], sr[9], sr[10], sr[11], sr[12], sr[13], sr[14]);
             }
         }
+        if (!c.returned && steps == 250000u) {
+            // Do not turn a diagnostic step budget into an artificial crash.
+            // Resume normal Dynarmic execution if the whole constructor is
+            // longer than the bounded single-step window.
+            bridge_log("CRYPTO STEP LIMIT: reached %u instructions at pc=0x%08x; resuming JIT",
+                       steps, R[15]);
+            c.jit->Run();
+        }
         bridge_log("CRYPTO STEP END: steps=%u returned=%d pc=0x%08x",
                    steps, c.returned ? 1 : 0, R[15]);
     } else {

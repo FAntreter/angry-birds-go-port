@@ -98,7 +98,7 @@ struct Callbacks final : Dynarmic::A32::UserCallbacks {
             const uint32_t rng = g_crypto_watch_addresses[2];
             if (rng && a >= rng && a < rng + 0x4000u) {
                 const uint32_t n = g_crypto_code_logs.fetch_add(1, std::memory_order_relaxed);
-                if (n < 160) {
+                if (n < 512) {
                     bridge_log("CRYPTO CODE: translated guest PC=0x%08x offset=0x%x", a, a - rng);
                     if (a >= rng + 0x14f0u && a < rng + 0x1580u)
                         LogCryptoTranslateState(a, rng);
@@ -172,7 +172,7 @@ void Callbacks::AddTicks(uint64_t ticks) {
     const uint32_t rng = g_crypto_watch_addresses[2];
     static std::atomic<uint32_t> all_tick_logs{0};
     const uint32_t tick_n = all_tick_logs.fetch_add(1, std::memory_order_relaxed);
-    if (tick_n < 320) {
+    if (tick_n < 480) {
         const auto& tr = owner->jit->Regs();
         bridge_log("CRYPTO TICK: post_block_pc=0x%08x lr=0x%08x cpsr=0x%08x ticks=%" PRIu64
                    " r0=0x%08x r1=0x%08x r2=0x%08x r3=0x%08x",
@@ -182,16 +182,17 @@ void Callbacks::AddTicks(uint64_t ticks) {
     if (rng && pc >= rng && pc < rng + 0x4000u) {
         static std::atomic<uint32_t> execution_logs{0};
         const uint32_t n = execution_logs.fetch_add(1, std::memory_order_relaxed);
-        if (n < 120)
+        if (n < 400)
             bridge_log("CRYPTO EXEC: guest PC=0x%08x offset_from_RNG=0x%x ticks=%" PRIu64,
                        pc, pc - rng, ticks);
         // Capture the live register state around the rng_init block seen in
         // device traces (rng_init + 0x230..0x260). AddTicks runs after a
         // translated block, so this records the actual post-block state.
-        if (pc >= rng + 0x14f0u && pc < rng + 0x1580u) {
+        if ((pc >= rng + 0x12e0u && pc < rng + 0x1800u) ||
+            (pc >= rng + 0x2c148u && pc < rng + 0x2c500u)) {
             static std::atomic<uint32_t> rng_state_logs{0};
             const uint32_t m = rng_state_logs.fetch_add(1, std::memory_order_relaxed);
-            if (m < 48) {
+            if (m < 96) {
                 const auto& r = owner->jit->Regs();
                 bridge_log("CRYPTO STATE: pc=0x%08x off=0x%x cpsr=0x%08x ticks=%" PRIu64,
                            r[15], r[15] - rng, owner->jit->Cpsr(), ticks);
@@ -416,7 +417,8 @@ uint64_t call(uint32_t fn, const std::vector<uint32_t>& words) {
                    call_pc, watched_rng, watched_rng ? call_pc - watched_rng : 0,
                    startup_entry, enters_startup_constructor ? 1 : 0);
         uint32_t steps = 0;
-        while (!c.returned && steps < 250000u) {
+        uint32_t trace_logs = 0;
+        while (!c.returned && steps < 50000u) {
             const uint32_t before_pc = R[15];
             const uint32_t before_cpsr = c.jit->Cpsr();
             const bool thumb = (before_cpsr & 0x20u) != 0;
@@ -430,8 +432,11 @@ uint64_t call(uint32_t fn, const std::vector<uint32_t>& words) {
             }
             c.jit->Step();
             ++steps;
-            if (before_pc >= watched_rng + 0x14d0u &&
-                before_pc < watched_rng + 0x1560u) {
+            const bool in_rng_hash = before_pc >= watched_rng + 0x12e0u &&
+                                     before_pc < watched_rng + 0x1800u;
+            const bool in_sha256 = before_pc >= watched_rng + 0x2c148u &&
+                                   before_pc < watched_rng + 0x2c500u;
+            if ((in_rng_hash || in_sha256) && trace_logs < 700u) {
                 const auto& sr = c.jit->Regs();
                 bridge_log("CRYPTO STEP: n=%u pc=0x%08x insn=0x%08x next=0x%08x cpsr=0x%08x",
                            steps, before_pc, instruction, sr[15], c.jit->Cpsr());
@@ -439,9 +444,16 @@ uint64_t call(uint32_t fn, const std::vector<uint32_t>& words) {
                            sr[0], sr[1], sr[2], sr[3], sr[4], sr[5], sr[6], sr[7]);
                 bridge_log("CRYPTO STEP REG: r8=%08x r9=%08x r10=%08x r11=%08x r12=%08x sp=%08x lr=%08x",
                            sr[8], sr[9], sr[10], sr[11], sr[12], sr[13], sr[14]);
+                ++trace_logs;
             }
         }
-        if (!c.returned && steps == 250000u) {
+        bridge_log("CRYPTO STEP FINAL: steps=%u returned=%d pc=0x%08x cpsr=0x%08x",
+                   steps, c.returned ? 1 : 0, R[15], c.jit->Cpsr());
+        bridge_log("CRYPTO STEP FINAL REG: r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x r6=%08x r7=%08x",
+                   R[0], R[1], R[2], R[3], R[4], R[5], R[6], R[7]);
+        bridge_log("CRYPTO STEP FINAL REG: r8=%08x r9=%08x r10=%08x r11=%08x r12=%08x sp=%08x lr=%08x",
+                   R[8], R[9], R[10], R[11], R[12], R[13], R[14]);
+        if (!c.returned && steps == 50000u) {
             // Do not turn a diagnostic step budget into an artificial crash.
             // Resume normal Dynarmic execution if the whole constructor is
             // longer than the bounded single-step window.

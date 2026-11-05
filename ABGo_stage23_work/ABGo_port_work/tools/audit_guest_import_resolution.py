@@ -27,7 +27,11 @@ def symbols(path):
     return und, defined
 
 source = '\n'.join(p.read_text(errors='ignore') for p in (ROOT / 'bridge_src').glob('*') if p.is_file())
-hle = set(re.findall(r'H\("([^"\n]+)"\s*,', source))
+# Function registrations use H/HE/HRAW; data imports are registered separately.
+# Include all three macros and add_data() so the audit does not mislabel errno-
+# aware wrappers or guest data symbols (for example OpenSL ES IIDs) as missing.
+hle = set(re.findall(r'\b(?:H|HE|HRAW)\("([^"\n]+)"\s*,', source))
+hle.update(re.findall(r'\badd_data\("([^"\n]+)"\s*,', source))
 libsyms = {p.name: symbols(p) for p in LIBS}
 all_guest_exports = set().union(*(defined for _, defined in libsyms.values()))
 rows=[]

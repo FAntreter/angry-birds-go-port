@@ -32,6 +32,11 @@ source = '\n'.join(p.read_text(errors='ignore') for p in (ROOT / 'bridge_src').g
 # aware wrappers or guest data symbols (for example OpenSL ES IIDs) as missing.
 hle = set(re.findall(r'\b(?:H|HE|HRAW)\("([^"\n]+)"\s*,', source))
 hle.update(re.findall(r'\badd_data\("([^"\n]+)"\s*,', source))
+# OpenSL ES IIDs are registered through names[] then add_data(names[i], ...).
+opensles = (ROOT / 'bridge_src' / 'hle_opensles.cpp').read_text(errors='ignore')
+iid_table = re.search(r'const char\\*\\s+names\\[\\]\\s*=\\s*\\{(.*?)\\};', opensles, re.S)
+if iid_table:
+    hle.update(re.findall(r'\"([^\"\\n]+)\"', iid_table.group(1)))
 libsyms = {p.name: symbols(p) for p in LIBS}
 all_guest_exports = set().union(*(defined for _, defined in libsyms.values()))
 rows=[]
@@ -67,7 +72,7 @@ report += ['## Interpretation and next actions','',
            '1. Prioritize EGL and `ANativeWindow_setBuffersGeometry`: they are required for a real graphics path and cannot be replaced by arbitrary no-op thunks.',
            '2. Resolve OpenSL ES IID data symbols and interface/vtable calls together; a function-name-only implementation is insufficient.',
            '3. Audit C++ imports against the exact dependency export table and ELF symbol-version/visibility data before assuming `libSkynestSDK.so` will satisfy them.',
-           '4. Add runtime diagnostics that report the importing module and relocation type for every unresolved import before constructors run.',
+           '4. Runtime loader diagnostics now report the importing module, symbol, and relocation type for unresolved imports; device validation is still required.',
            '5. Compile with the Android NDK and validate the loader on device before estimating a playable milestone more confidently.', '',
            '## Re-run', '`python3 tools/audit_guest_import_resolution.py`', '']
 path=ROOT/'reports'/'stage9_guest_import_resolution.md'

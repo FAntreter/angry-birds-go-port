@@ -83,6 +83,8 @@ int32_t g_munmap(GPtr<void> addr, uint32_t) {
 GPtr<void> g_memcpy(GPtr<void> d, GPtr<const void> s, uint32_t n) { if (n) memcpy(d.h(), s.h(), n); return d; }
 GPtr<void> g_memmove(GPtr<void> d, GPtr<const void> s, uint32_t n) { if (n) memmove(d.h(), s.h(), n); return d; }
 GPtr<void> g_memset(GPtr<void> d, int32_t c, uint32_t n) { if (n) memset(d.h(), c, n); return d; }
+// ARM EABI helper uses (destination, byte_count, value), unlike libc memset.
+void g_aeabi_memset(GPtr<void> d, uint32_t n, int32_t c) { if (n) memset(d.h(), c, n); }
 int32_t g_memcmp(GPtr<const void> a, GPtr<const void> b, uint32_t n) { return n ? memcmp(a.h(), b.h(), n) : 0; }
 GPtr<void> g_memchr(GPtr<const void> s, int32_t c, uint32_t n) { return {n ? g(memchr(s.h(), c, n)) : 0}; }
 GPtr<void> g_memrchr(GPtr<const void> s, int32_t c, uint32_t n) { return {n ? g(memrchr(s.h(), c, n)) : 0}; }
@@ -777,7 +779,7 @@ const hle::Def kDefs[] = {
     HE("mmap", g_mmap), H("munmap", g_munmap),
     H("memcpy", g_memcpy), H("memmove", g_memmove), H("memset", g_memset), H("memcmp", g_memcmp),
     H("memchr", g_memchr), H("memrchr", g_memrchr), H("memmem", g_memmem),
-    H("__aeabi_memcpy", g_memcpy), H("__aeabi_memmove", g_memmove),
+    H("__aeabi_memcpy", g_memcpy), H("__aeabi_memmove", g_memmove), H("__aeabi_memset", g_aeabi_memset),
     H("strlen", g_strlen), H("strcmp", g_strcmp), H("strncmp", g_strncmp), H("strcasecmp", g_strcasecmp),
     H("strncasecmp", g_strncasecmp), H("strcoll", g_strcoll), H("strxfrm", g_strxfrm), H("strcpy", g_strcpy),
     H("strncpy", g_strncpy), H("strcat", g_strcat), H("strncat", g_strncat), H("strchr", g_strchr),

@@ -395,11 +395,15 @@ uint64_t call(uint32_t fn, const std::vector<uint32_t>& words) {
     c.returned = false;
     ++t.depth;
     const uint32_t watched_rng = g_crypto_watch_addresses[2];
+    const uint32_t call_pc = fn & ~1u;
     if (g_crypto_watch_active.load(std::memory_order_relaxed) &&
-        watched_rng != 0 && (fn & ~1u) == watched_rng) {
-        // Step only the RNG init function so we can observe the exact guest
-        // instruction that stops progressing. Calling Step() from outside Run()
-        // avoids relying on post-block callbacks for this diagnostic.
+        watched_rng != 0 && call_pc >= watched_rng &&
+        call_pc < watched_rng + 0x4000u) {
+        // Step calls that enter anywhere in the RNG init code range. The
+        // device trace shows execution can enter at an interior helper PC,
+        // not only at the RNG init symbol itself.
+        bridge_log("CRYPTO STEP BEGIN: fn=0x%08x rng=0x%08x offset=0x%x",
+                   call_pc, watched_rng, call_pc - watched_rng);
         uint32_t steps = 0;
         while (!c.returned && steps < 250000u) {
             const uint32_t before_pc = R[15];

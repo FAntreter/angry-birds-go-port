@@ -1,5 +1,6 @@
 // libc / libm / libdl imports of the guest, implemented on the host bionic.
 #include <arpa/inet.h>
+#include <ctype.h>
 #include <dirent.h>
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -47,6 +48,7 @@ using arena::hp;
 
 // ---------------------------------------------------------------- memory
 GPtr<void> g_malloc(uint32_t n) { return {arena::gmalloc(n)}; }
+GPtr<void> g_memalign(uint32_t alignment, uint32_t n) { return {arena::gmemalign(alignment, n)}; }
 GPtr<void> g_calloc(uint32_t n, uint32_t s) { return {arena::gcalloc(n, s)}; }
 GPtr<void> g_realloc(GPtr<void> p, uint32_t n) { return {arena::grealloc(p.a, n)}; }
 void g_free(GPtr<void> p) { if (p) arena::gfree(p.a); }
@@ -92,6 +94,10 @@ GPtr<void> g_memmem(GPtr<const void> a, uint32_t an, GPtr<const void> b, uint32_
     return {g(memmem(a.h(), an, b.h(), bn))};
 }
 uint32_t g_strlen(GStr s) { return static_cast<uint32_t>(strlen(s.h())); }
+uint32_t g_strnlen(GStr s, uint32_t n) { return static_cast<uint32_t>(strnlen(s.h(), n)); }
+GPtr<char> g_strtok(GPtr<char> s, GStr delim) { return {g(strtok(s ? s.h() : nullptr, delim.h()))}; }
+int32_t g_isspace(int32_t c) { return isspace(static_cast<unsigned char>(c)); }
+int32_t g_isalnum(int32_t c) { return isalnum(static_cast<unsigned char>(c)); }
 int32_t g_strcmp(GStr a, GStr b) { return strcmp(a.h(), b.h()); }
 int32_t g_strncmp(GStr a, GStr b, uint32_t n) { return strncmp(a.h(), b.h(), n); }
 int32_t g_strcasecmp(GStr a, GStr b) { return strcasecmp(a.h(), b.h()); }
@@ -267,12 +273,14 @@ void g_sscanf(cpu::Ctx& c) {
 #define M2F(n) float m_##n(float x, float y) { return ::n(x, y); }
 M1(acos) M1(asin) M1(atan) M1(ceil) M1(cos) M1(cosh) M1(exp) M1(floor) M1(log) M1(log10) M1(rint) M1(sin)
 M1(sinh) M1(sqrt) M1(tan) M1(tanh) M1(trunc)
-M1F(ceilf) M1F(cosf) M1F(floorf) M1F(sinf) M1F(sqrtf) M1F(tanf)
+M1F(acosf) M1F(asinf) M1F(atanf) M1F(ceilf) M1F(cosf) M1F(expf) M1F(fabsf) M1F(floorf) M1F(logf) M1F(sinf) M1F(sqrtf) M1F(tanf)
 M2(atan2) M2(fmod) M2(pow) M2F(atan2f) M2F(fmodf) M2F(powf)
 double m_ldexp(double x, int32_t e) { return ldexp(x, e); }
 double m_frexp(double x, GPtr<int32_t> e) { int ee; double r = frexp(x, &ee); *e.h() = ee; return r; }
 double m_modf(double x, GPtr<double> ip) { double i; double r = modf(x, &i); memcpy(ip.h(), &i, 8); return r; }
 int32_t m_isnan(double x) { return std::isnan(x); }
+int32_t m_isinf(double x) { return std::isinf(x); }
+int32_t m_lrint(double x) { return static_cast<int32_t>(lrint(x)); }
 int32_t g_lrand48() { return static_cast<int32_t>(lrand48()); }
 void g_srand48(int32_t s) { srand48(s); }
 
@@ -775,12 +783,12 @@ void make_data() {
 }
 
 const hle::Def kDefs[] = {
-    H("malloc", g_malloc), H("calloc", g_calloc), H("realloc", g_realloc), H("free", g_free),
+    H("malloc", g_malloc), H("memalign", g_memalign), H("calloc", g_calloc), H("realloc", g_realloc), H("free", g_free),
     HE("mmap", g_mmap), H("munmap", g_munmap),
     H("memcpy", g_memcpy), H("memmove", g_memmove), H("memset", g_memset), H("memcmp", g_memcmp),
     H("memchr", g_memchr), H("memrchr", g_memrchr), H("memmem", g_memmem),
     H("__aeabi_memcpy", g_memcpy), H("__aeabi_memmove", g_memmove), H("__aeabi_memset", g_aeabi_memset),
-    H("strlen", g_strlen), H("strcmp", g_strcmp), H("strncmp", g_strncmp), H("strcasecmp", g_strcasecmp),
+    H("strlen", g_strlen), H("strnlen", g_strnlen), H("strtok", g_strtok), H("isspace", g_isspace), H("isalnum", g_isalnum), H("strcmp", g_strcmp), H("strncmp", g_strncmp), H("strcasecmp", g_strcasecmp),
     H("strncasecmp", g_strncasecmp), H("strcoll", g_strcoll), H("strxfrm", g_strxfrm), H("strcpy", g_strcpy),
     H("strncpy", g_strncpy), H("strcat", g_strcat), H("strncat", g_strncat), H("strchr", g_strchr),
     H("strrchr", g_strrchr), H("strstr", g_strstr), H("strpbrk", g_strpbrk), H("strcspn", g_strcspn),
@@ -796,7 +804,7 @@ const hle::Def kDefs[] = {
     H("exp", m_exp), H("floor", m_floor), H("log", m_log), H("log10", m_log10), H("rint", m_rint), H("sin", m_sin),
     H("sinh", m_sinh), H("sqrt", m_sqrt), H("tan", m_tan), H("tanh", m_tanh), H("trunc", m_trunc),
     H("ceilf", m_ceilf), H("cosf", m_cosf), H("floorf", m_floorf), H("sinf", m_sinf), H("sqrtf", m_sqrtf),
-    H("tanf", m_tanf), H("atan2", m_atan2), H("fmod", m_fmod), H("pow", m_pow), H("atan2f", m_atan2f),
+    H("tanf", m_tanf), H("__isinf", m_isinf), H("lrint", m_lrint), H("atan2", m_atan2), H("fmod", m_fmod), H("pow", m_pow), H("atan2f", m_atan2f),
     H("fmodf", m_fmodf), H("powf", m_powf), H("ldexp", m_ldexp), H("frexp", m_frexp), H("modf", m_modf),
     H("isnan", m_isnan), H("lrand48", g_lrand48), H("srand48", g_srand48),
     H("time", g_time), HE("gettimeofday", g_gettimeofday), HE("clock_gettime", g_clock_gettime),

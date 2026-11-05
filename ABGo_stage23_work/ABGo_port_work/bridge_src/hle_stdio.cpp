@@ -123,6 +123,15 @@ int32_t g_getc(uint32_t t) {
     sync(t, hf);
     return r;
 }
+int32_t g_fgetc(uint32_t t) { return g_getc(t); }
+int32_t g_putchar(int32_t c) { return g_fputc(c, g_sf + kFileSize); }
+int32_t g_puts(GStr s) {
+    HostFile* hf = lookup(g_sf + kFileSize);
+    if (!hf || !s) return EOF;
+    log_write(hf, s.h(), strlen(s.h()));
+    log_write(hf, "\n", 1);
+    return 0;
+}
 int32_t g_ungetc(int32_t c, uint32_t t) {
     HostFile* hf = lookup(t);
     if (!hf || !hf->f) return EOF;
@@ -194,7 +203,7 @@ int32_t g_android_log_write(int32_t prio, GStr tag, GStr msg) {
 const hle::Def kDefs[] = {
     HE("fopen", g_fopen), HE("fdopen", g_fdopen), HE("tmpfile", g_tmpfile), HE("freopen", g_freopen),
     HE("fclose", g_fclose), HE("fread", g_fread), HE("fwrite", g_fwrite), HE("fputs", g_fputs),
-    HE("fputc", g_fputc), HE("putc", g_fputc), HE("getc", g_getc), HE("ungetc", g_ungetc), HE("fgets", g_fgets),
+    HE("fputc", g_fputc), HE("putc", g_fputc), HE("getc", g_getc), HE("fgetc", g_fgetc), H("putchar", g_putchar), H("puts", g_puts), HE("ungetc", g_ungetc), HE("fgets", g_fgets),
     HE("fflush", g_fflush), H("ferror", g_ferror), H("feof", g_feof), H("fileno", g_fileno),
     HE("fseek", g_fseek), HE("fseeko", g_fseek), HE("ftell", g_ftell), HE("ftello", g_ftell),
     H("setvbuf", g_setvbuf), HE("getwc", g_getwc), HE("putwc", g_putwc), HE("ungetwc", g_ungetwc),

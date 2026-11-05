@@ -221,6 +221,23 @@ int32_t g_setspecific(uint32_t k, uint32_t v) {
     t_values[k] = v;
     return 0;
 }
+
+// pthread_once_t is a zero-initialized 32-bit guest word. Keep host once_flags
+// keyed by its guest address so concurrent guest threads execute the initializer once.
+std::mutex g_once_mu;
+std::unordered_map<uint32_t, std::shared_ptr<std::once_flag>> g_once_flags;
+int32_t g_pthread_once(GPtr<uint32_t> once, uint32_t initializer) {
+    if (!once || !initializer) return EINVAL;
+    std::shared_ptr<std::once_flag> flag;
+    {
+        std::lock_guard l(g_once_mu);
+        auto& slot = g_once_flags[once.a];
+        if (!slot) slot = std::make_shared<std::once_flag>();
+        flag = slot;
+    }
+    std::call_once(*flag, [initializer] { cpu::call(initializer, {}); });
+    return 0;
+}
 void run_key_destructors() {
     for (int round = 0; round < 4; ++round) {
         bool any = false;
@@ -347,6 +364,7 @@ const hle::Def kDefs[] = {
     H("pthread_key_create", g_key_create), H("pthread_key_delete", g_key_delete),
     H("pthread_getspecific", g_getspecific), H("pthread_setspecific", g_setspecific),
     H("pthread_create", g_pthread_create), H("pthread_join", g_pthread_join), H("pthread_detach", g_pthread_detach),
+    H("pthread_once", g_pthread_once),
     H("pthread_self", g_pthread_self), H("pthread_equal", g_pthread_equal),
     H("pthread_getschedparam", g_pthread_getschedparam), H("pthread_setschedparam", g_pthread_setschedparam),
     H("pthread_setname_np", g_pthread_setname_np),

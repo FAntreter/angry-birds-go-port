@@ -34,6 +34,7 @@ constexpr size_t kMaxCpus = 128;
 constexpr uint32_t kStackSize = 2u << 20;
 
 static std::array<uint32_t, 10> g_crypto_watch_addresses{};
+static std::atomic<uint32_t> g_crypto_watch_entrypoint{0};
 static std::atomic<uint32_t> g_crypto_watch_mask{0};
 static std::atomic<bool> g_crypto_watch_active{false};
 static std::atomic<uint32_t> g_crypto_code_logs{0};
@@ -345,6 +346,9 @@ void watch_abgo_crypto_startup(uint32_t bias) {
     };
     for (size_t i = 0; i < g_crypto_watch_addresses.size(); ++i)
         g_crypto_watch_addresses[i] = bias + offsets[i];
+    // init_array[676] is the constructor containing sftk_startup_tests.
+    // Step this outer call as well: it branches into RNG code internally.
+    g_crypto_watch_entrypoint.store(bias + 0x00c88e8, std::memory_order_release);
     g_crypto_watch_mask.store(0, std::memory_order_relaxed);
     g_crypto_code_logs.store(0, std::memory_order_relaxed);
     g_crypto_watch_active.store(true, std::memory_order_release);
@@ -399,15 +403,18 @@ uint64_t call(uint32_t fn, const std::vector<uint32_t>& words) {
     c.returned = false;
     ++t.depth;
     const uint32_t watched_rng = g_crypto_watch_addresses[2];
+    const uint32_t startup_entry = g_crypto_watch_entrypoint.load(std::memory_order_acquire);
     const uint32_t call_pc = fn & ~1u;
+    const bool enters_rng_directly = watched_rng != 0 && call_pc >= watched_rng &&
+                                     call_pc < watched_rng + 0x4000u;
+    const bool enters_startup_constructor = startup_entry != 0 && call_pc == startup_entry;
     if (g_crypto_watch_active.load(std::memory_order_relaxed) &&
-        watched_rng != 0 && call_pc >= watched_rng &&
-        call_pc < watched_rng + 0x4000u) {
-        // Step calls that enter anywhere in the RNG init code range. The
-        // device trace shows execution can enter at an interior helper PC,
-        // not only at the RNG init symbol itself.
-        bridge_log("CRYPTO STEP BEGIN: fn=0x%08x rng=0x%08x offset=0x%x",
-                   call_pc, watched_rng, call_pc - watched_rng);
+        (enters_rng_directly || enters_startup_constructor)) {
+        // Step the outer NSS/FIPS constructor as well as direct RNG calls.
+        // The constructor can branch into RNG code without a new host call.
+        bridge_log("CRYPTO STEP BEGIN: fn=0x%08x rng=0x%08x rng_offset=0x%x startup_entry=0x%08x outer=%d",
+                   call_pc, watched_rng, watched_rng ? call_pc - watched_rng : 0,
+                   startup_entry, enters_startup_constructor ? 1 : 0);
         uint32_t steps = 0;
         while (!c.returned && steps < 250000u) {
             const uint32_t before_pc = R[15];

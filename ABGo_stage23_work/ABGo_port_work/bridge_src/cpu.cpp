@@ -405,9 +405,14 @@ uint64_t call(uint32_t fn, const std::vector<uint32_t>& words) {
             const uint32_t before_pc = R[15];
             const uint32_t before_cpsr = c.jit->Cpsr();
             const bool thumb = (before_cpsr & 0x20u) != 0;
-            const uint32_t instruction = thumb
-                ? static_cast<uint32_t>(*reinterpret_cast<uint16_t*>(arena::base + (before_pc & ~1u)))
-                : rd<uint32_t>(before_pc & ~3u);
+            uint32_t instruction = 0;
+            if (thumb) {
+                uint16_t halfword = 0;
+                memcpy(&halfword, arena::base + (before_pc & ~1u), sizeof halfword);
+                instruction = halfword;
+            } else {
+                memcpy(&instruction, arena::base + (before_pc & ~3u), sizeof instruction);
+            }
             c.jit->Step();
             ++steps;
             if (before_pc >= watched_rng + 0x14d0u &&

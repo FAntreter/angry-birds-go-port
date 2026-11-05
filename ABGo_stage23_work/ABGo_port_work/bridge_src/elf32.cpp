@@ -27,12 +27,18 @@ const T* at(const uint8_t* data, size_t size, size_t off, size_t count = 1) {
     return reinterpret_cast<const T*>(data + off);
 }
 
-uint32_t resolve_import(const std::string& name, bool weak, const std::string& importer) {
+uint32_t resolve_import(const std::string& name, bool weak, const std::string& importer, uint32_t relocation) {
     if (uint32_t a = find_export(name)) return a;
     if (uint32_t a = hle::resolve(name)) return a;
-    if (weak) return 0;
-    LOGW("%s: unresolved %s import %s; installing diagnostic thunk (not a real implementation)",
-         importer.c_str(), weak ? "weak" : "strong", name.c_str());
+    if (weak) {
+        bridge_log("UNRESOLVED WEAK IMPORT: module=%s symbol=%s relocation=%u (resolved as null)",
+                   importer.c_str(), name.c_str(), relocation);
+        return 0;
+    }
+    // Preserve the exact loader context in the app-side crash log. This is emitted
+    // during relocation, before guest constructors can call the diagnostic thunk.
+    bridge_log("UNRESOLVED STRONG IMPORT: module=%s symbol=%s relocation=%u (diagnostic thunk installed)",
+               importer.c_str(), name.c_str(), relocation);
     return hle::unresolved_thunk(name);
 }
 
@@ -173,11 +179,11 @@ Module* load(const std::string& name, const uint8_t* data, size_t size) {
     }
 
     std::unordered_map<uint32_t, uint32_t> cache;
-    auto sym_value = [&](uint32_t idx) -> uint32_t {
+    auto sym_value = [&](uint32_t idx, uint32_t relocation) -> uint32_t {
         if (auto it = cache.find(idx); it != cache.end()) return it->second;
         const auto& s = syms[idx];
         uint32_t v = s.st_shndx != SHN_UNDEF ? s.st_value + m->bias
-                                             : resolve_import(symname(idx), ELF32_ST_BIND(s.st_info) == STB_WEAK, m->name);
+                                             : resolve_import(symname(idx), ELF32_ST_BIND(s.st_info) == STB_WEAK, m->name, relocation);
         cache[idx] = v;
         return v;
     };
@@ -190,10 +196,10 @@ Module* load(const std::string& name, const uint8_t* data, size_t size) {
             switch (type) {
             case R_ARM_NONE_: break;
             case R_ARM_RELATIVE_: *p += m->bias; break;
-            case R_ARM_ABS32_: *p += sym_value(sym); break;
+            case R_ARM_ABS32_: *p += sym_value(sym, type); break;
             case R_ARM_REL32_: *p += sym_value(sym) - where; break;
             case R_ARM_GLOB_DAT_:
-            case R_ARM_JUMP_SLOT_: *p = sym_value(sym); break;
+            case R_ARM_JUMP_SLOT_: *p = sym_value(sym, type); break;
             default: fatal("%s: unsupported relocation type %u", name.c_str(), type);
             }
         }

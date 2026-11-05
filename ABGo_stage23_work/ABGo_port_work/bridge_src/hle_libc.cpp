@@ -1,5 +1,6 @@
 // libc / libm / libdl imports of the guest, implemented on the host bionic.
 #include <arpa/inet.h>
+#include <android/log.h>
 #include <ctype.h>
 #include <dirent.h>
 #include <dlfcn.h>
@@ -28,6 +29,7 @@
 #include <wchar.h>
 #include <wctype.h>
 
+#include <algorithm>
 #include <climits>
 #include <cstdlib>
 #include <map>

@@ -11,6 +11,7 @@
 #include <poll.h>
 #include <pwd.h>
 #include <sched.h>
+#include <semaphore.h>
 #include <signal.h>
 #include <sys/auxv.h>
 #include <sys/ioctl.h>
@@ -36,6 +37,7 @@
 #include <climits>
 #include <cstdlib>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <random>
 #include <string>
@@ -367,6 +369,62 @@ void g_srand48(int32_t s) { srand48(s); }
 // ---------------------------------------------------------------- time
 struct GTimeval { int32_t sec, usec; };
 struct GTimespec { int32_t sec, nsec; };
+
+struct GuestSem { sem_t host{}; };
+std::mutex g_sem_mu;
+std::unordered_map<uint32_t, std::shared_ptr<GuestSem>> g_semaphores;
+
+std::shared_ptr<GuestSem> find_guest_sem(uint32_t address) {
+    std::lock_guard lock(g_sem_mu);
+    auto it = g_semaphores.find(address);
+    if (it == g_semaphores.end()) { errno = EINVAL; return {}; }
+    return it->second;
+}
+
+int32_t g_sem_init(GPtr<uint32_t> sem, int32_t pshared, uint32_t value) {
+    if (!sem) { errno = EINVAL; return -1; }
+    // The guest allocation is private to this emulated process. Do not claim
+    // process-shared semantics that cannot be provided by the address map.
+    if (pshared != 0) { errno = ENOSYS; return -1; }
+    auto object = std::make_shared<GuestSem>();
+    std::lock_guard lock(g_sem_mu);
+    if (g_semaphores.contains(sem.a)) { errno = EBUSY; return -1; }
+    if (sem_init(&object->host, 0, value) != 0) return -1;
+    g_semaphores.emplace(sem.a, std::move(object));
+    return 0;
+}
+int32_t g_sem_destroy(GPtr<uint32_t> sem) {
+    if (!sem) { errno = EINVAL; return -1; }
+    std::lock_guard lock(g_sem_mu);
+    auto it = g_semaphores.find(sem.a);
+    if (it == g_semaphores.end()) { errno = EINVAL; return -1; }
+    if (sem_destroy(&it->second->host) != 0) return -1;
+    g_semaphores.erase(it);
+    return 0;
+}
+int32_t g_sem_getvalue(GPtr<uint32_t> sem, GPtr<int32_t> value) {
+    if (!sem || !value) { errno = EINVAL; return -1; }
+    auto object = find_guest_sem(sem.a);
+    return object ? sem_getvalue(&object->host, value.h()) : -1;
+}
+int32_t g_sem_post(GPtr<uint32_t> sem) {
+    if (!sem) { errno = EINVAL; return -1; }
+    auto object = find_guest_sem(sem.a);
+    return object ? sem_post(&object->host) : -1;
+}
+int32_t g_sem_wait(GPtr<uint32_t> sem) {
+    if (!sem) { errno = EINVAL; return -1; }
+    auto object = find_guest_sem(sem.a);
+    return object ? sem_wait(&object->host) : -1;
+}
+int32_t g_sem_timedwait(GPtr<uint32_t> sem, GPtr<const GTimespec> timeout) {
+    if (!sem || !timeout) { errno = EINVAL; return -1; }
+    auto object = find_guest_sem(sem.a);
+    if (!object) return -1;
+    const GTimespec guest = *timeout.h();
+    struct timespec host{guest.sec, guest.nsec};
+    return sem_timedwait(&object->host, &host);
+}
 struct GTm { int32_t sec, min, hour, mday, mon, year, wday, yday, isdst, gmtoff; uint32_t zone; };
 
 void tm_to_guest(const struct tm& t, GTm* o) {
@@ -969,7 +1027,7 @@ const hle::Def kDefs[] = {
     H("inet_ntop", g_inet_ntop), H("inet_pton", g_inet_pton), HE("gethostname", g_gethostname),
     H("getpid", g_getpid), H("getuid", g_getuid), H("geteuid", g_geteuid), H("getgid", g_getgid), H("getegid", g_getegid), H("getpwuid", g_getpwuid), H("getenv", g_getenv),
     H("setlocale", g_setlocale), H("sysconf", g_sysconf), H("getauxval", g_getauxval),
-    H("getrandom", g_getrandom), H("sysinfo", g_sysinfo), H("usleep", g_usleep), H("sleep", g_sleep), H("get_h_errno", g_get_h_errno), H("__get_h_errno", g_get_h_errno), HE("__mmap2", g_mmap2), HRAW("qsort", g_qsort), HRAW("bsearch", g_bsearch), HRAW("__android_log_print", g_android_log_print), HRAW("__android_log_assert", g_android_log_assert), H("__system_property_get", g_system_property_get), H("sched_yield", g_sched_yield),
+    H("getrandom", g_getrandom), H("sysinfo", g_sysinfo), H("usleep", g_usleep), H("sleep", g_sleep), HE("sem_init", g_sem_init), HE("sem_destroy", g_sem_destroy), HE("sem_getvalue", g_sem_getvalue), HE("sem_post", g_sem_post), HE("sem_wait", g_sem_wait), HE("sem_timedwait", g_sem_timedwait), H("get_h_errno", g_get_h_errno), H("__get_h_errno", g_get_h_errno), HE("__mmap2", g_mmap2), HRAW("qsort", g_qsort), HRAW("bsearch", g_bsearch), HRAW("__android_log_print", g_android_log_print), HRAW("__android_log_assert", g_android_log_assert), H("__system_property_get", g_system_property_get), H("sched_yield", g_sched_yield),
     H("sigaction", g_sigaction), H("sigprocmask", g_sigprocmask), HRAW("abort", g_abort), H("exit", g_exit),
     H("raise", g_raise), HRAW("__stack_chk_fail", g_stack_chk_fail), HRAW("syscall", g_syscall),
     H("dlopen", g_dlopen), H("dlsym", g_dlsym), H("dlclose", g_dlclose), H("dlerror", g_dlerror),

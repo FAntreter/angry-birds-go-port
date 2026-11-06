@@ -1206,6 +1206,17 @@ void make_data() {
     uint32_t page = arena::static_alloc(4, 4);
     *hp<uint32_t>(page) = 4096;
     hle::add_data("__page_size", page);
+
+    // Legacy BSD sys_siglist is a guest char*[] data symbol. Never expose
+    // host pointers here: every entry must be a 32-bit address in the arena.
+    constexpr uint32_t kSignalCount = 65;
+    uint32_t siglist = arena::static_alloc(kSignalCount * sizeof(uint32_t), 4);
+    auto* guest_signals = hp<uint32_t>(siglist);
+    for (uint32_t i = 0; i < kSignalCount; ++i) {
+        const char* description = strsignal(static_cast<int>(i));
+        guest_signals[i] = arena::static_strdup(description ? description : "Unknown signal");
+    }
+    hle::add_data("sys_siglist", siglist);
 }
 
 const hle::Def kDefs[] = {

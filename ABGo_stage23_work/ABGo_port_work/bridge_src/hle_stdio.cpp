@@ -313,11 +313,22 @@ bool fmt_guest(cpu::Ctx& c, int first_arg, const char* format, std::string& out)
             else ok = fmt_piece(out, spec, static_cast<unsigned int>(v));
             break;
         }
-        case 'c': ok = fmt_piece(out, spec, static_cast<int>(fmt_word(c, argi++))); break;
+        case 'c': {
+            uint32_t a = fmt_word(c, argi++);
+            ok = length == "l"
+                ? fmt_piece(out, spec, static_cast<wint_t>(a))
+                : fmt_piece(out, spec, static_cast<int>(a));
+            break;
+        }
         case 's': {
             uint32_t a = fmt_word(c, argi++);
-            const char* s = a ? arena::hp<const char>(a) : "(null)";
-            ok = fmt_piece(out, spec, s);
+            if (length == "l") {
+                const wchar_t* ws = a ? arena::hp<const wchar_t>(a) : L"(null)";
+                ok = fmt_piece(out, spec, ws);
+            } else {
+                const char* str = a ? arena::hp<const char>(a) : "(null)";
+                ok = fmt_piece(out, spec, str);
+            }
             break;
         }
         case 'p': {

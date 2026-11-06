@@ -74,12 +74,20 @@ report=['# Stage 9 — guest import resolution audit','',
         f'- Undefined symbol names inspected: **{len(rows)}** (counted per library/import occurrence).',
         f'- HLE-name matches: **{counts["HLE name present (ABI unverified)"]}**.',
         f'- Names exported by another bundled guest ELF: **{counts["exported by another bundled guest ELF (scope/order unverified)"]}**.',
-        f'- Names with no matching guest export/HLE name: **{counts["no matching guest export or HLE name"]}**.', '',
+        f'- Names with no matching guest export/HLE name: **{counts["no matching guest export or HLE name"]}**.',
+        f'- Unmatched names with dynamic relocations: **{sum(bool(librelocs[lib].get(sym)) for lib, sym, _ in critical)}**.',
+        f'- Unmatched names without dynamic relocations: **{sum(not librelocs[lib].get(sym) for lib, sym, _ in critical)}**.', '',
         '## Unmatched imports by library','']
 for p in LIBS:
     names=[s for lib,s,state in critical if lib==p.name]
     report.append(f'### `{p.name}` — {len(names)} unmatched names')
-    if names:\n        for s in names:\n            kinds = sorted(set(librelocs[p.name].get(s, [])))\n            detail = ', '.join(kinds) if kinds else 'no dynamic relocation (possibly dlsym/dead import)'\n            report.append(f'- `{s}` — {detail}')\n    else:\n        report.append('No unmatched names in this static comparison.')
+    if names:
+        for s in names:
+            kinds = sorted(set(librelocs[p.name].get(s, [])))
+            detail = ', '.join(kinds) if kinds else 'no dynamic relocation (possibly dlsym/dead import)'
+            report.append(f'- `{s}` — {detail}')
+    else:
+        report.append('No unmatched names in this static comparison.')
     report.append('')
 report += ['## Interpretation and next actions','',
            '1. The OpenSL ES IID names and bridge registrations are included in this audit; interface/vtable behavior still needs runtime validation.',

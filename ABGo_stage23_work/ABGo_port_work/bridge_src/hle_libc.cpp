@@ -814,6 +814,79 @@ void g_freeaddrinfo(GPtr<GAddrInfo> result) {
     for (uint32_t address : allocations) arena::gfree(address);
 }
 
+// Legacy resolver results contain 32-bit guest pointers. Keep a per-thread
+// guest-layout snapshot, valid until the next host resolver call on this thread.
+struct GHostEnt { uint32_t name, aliases; int32_t addrtype, length; uint32_t addr_list; };
+uint32_t copy_hostent(const struct hostent* in) {
+    if (!in) return 0;
+    constexpr uint32_t kName = 20;
+    constexpr uint32_t kAliases = kName + 256;
+    constexpr uint32_t kAddresses = kAliases + 16 * 4;
+    constexpr uint32_t kAliasText = kAddresses + 16 * 4;
+    constexpr uint32_t kAddressText = kAliasText + 16 * 256;
+    constexpr uint32_t kBytes = kAddressText + 16 * 16;
+    static thread_local uint32_t block = arena::static_alloc(kBytes, 4);
+    if (!block) return 0;
+    memset(h(block), 0, kBytes);
+    auto* out = hp<GHostEnt>(block);
+    out->name = block + kName;
+    out->aliases = block + kAliases;
+    out->addrtype = in->h_addrtype;
+    out->length = in->h_length;
+    out->addr_list = block + kAddresses;
+    if (in->h_name) strncpy(reinterpret_cast<char*>(h(block + kName)), in->h_name, 255);
+    auto* aliases = hp<uint32_t>(block + kAliases);
+    if (in->h_aliases) for (uint32_t i = 0; i < 15 && in->h_aliases[i]; ++i) {
+        aliases[i] = block + kAliasText + i * 256;
+        strncpy(reinterpret_cast<char*>(h(aliases[i])), in->h_aliases[i], 255);
+    }
+    auto* addresses = hp<uint32_t>(block + kAddresses);
+    if (in->h_addr_list && in->h_length > 0 && in->h_length <= 16) {
+        for (uint32_t i = 0; i < 15 && in->h_addr_list[i]; ++i) {
+            addresses[i] = block + kAddressText + i * 16;
+            memcpy(h(addresses[i]), in->h_addr_list[i], in->h_length);
+        }
+    }
+    return block;
+}
+uint32_t g_gethostbyname(GStr name) { return copy_hostent(gethostbyname(name.h())); }
+uint32_t g_gethostbyaddr(GPtr<const void> address, uint32_t length, int32_t type) {
+    return copy_hostent(gethostbyaddr(address.h(), static_cast<socklen_t>(length), type));
+}
+
+struct GProtoEnt { uint32_t name, aliases; int32_t proto; };
+uint32_t copy_protoent(const struct protoent* in) {
+    if (!in) return 0;
+    constexpr uint32_t kName = 12;
+    constexpr uint32_t kAliases = kName + 256;
+    constexpr uint32_t kAliasText = kAliases + 16 * 4;
+    constexpr uint32_t kBytes = kAliasText + 16 * 256;
+    static thread_local uint32_t block = arena::static_alloc(kBytes, 4);
+    if (!block) return 0;
+    memset(h(block), 0, kBytes);
+    auto* out = hp<GProtoEnt>(block);
+    out->name = block + kName;
+    out->aliases = block + kAliases;
+    out->proto = in->p_proto;
+    if (in->p_name) strncpy(reinterpret_cast<char*>(h(block + kName)), in->p_name, 255);
+    auto* aliases = hp<uint32_t>(block + kAliases);
+    if (in->p_aliases) for (uint32_t i = 0; i < 15 && in->p_aliases[i]; ++i) {
+        aliases[i] = block + kAliasText + i * 256;
+        strncpy(reinterpret_cast<char*>(h(aliases[i])), in->p_aliases[i], 255);
+    }
+    return block;
+}
+uint32_t g_getprotobyname(GStr name) { return copy_protoent(getprotobyname(name.h())); }
+uint32_t g_getprotobynumber(int32_t number) { return copy_protoent(getprotobynumber(number)); }
+
+int32_t g_getnameinfo(GPtr<const sockaddr> address, uint32_t address_length,
+                      GPtr<char> host, uint32_t host_length,
+                      GPtr<char> service, uint32_t service_length, int32_t flags) {
+    return getnameinfo(address.h(), static_cast<socklen_t>(address_length),
+                       host ? host.h() : nullptr, host_length,
+                       service ? service.h() : nullptr, service_length, flags);
+}
+
 // ---------------------------------------------------------------- sockets (sockaddr layouts are ABI-neutral)
 int32_t g_socket(int32_t d, int32_t t, int32_t p) { return socket(d, t, p); }
 
@@ -1131,6 +1204,8 @@ const hle::Def kDefs[] = {
     HE("fcntl", g_fcntl), HE("ioctl", g_ioctl), HE("stat", g_stat), HE("fstat", g_fstat), HE("statfs", g_statfs),
     HE("opendir", g_opendir), HE("closedir", g_closedir), H("readdir_r", g_readdir_r), H("readdir", g_readdir),
     HE("getaddrinfo", g_getaddrinfo), H("freeaddrinfo", g_freeaddrinfo),
+    H("gethostbyname", g_gethostbyname), H("gethostbyaddr", g_gethostbyaddr), H("getnameinfo", g_getnameinfo),
+    H("getprotobyname", g_getprotobyname), H("getprotobynumber", g_getprotobynumber),
     HE("socket", g_socket), HE("socketpair", g_socketpair), HE("accept", g_accept), HE("listen", g_listen), HE("sendto", g_sendto), HE("shutdown", g_shutdown), HE("select", g_select), HE("bind", g_bind), HE("connect", g_connect), HE("getsockname", g_getsockname),
     HE("getpeername", g_getpeername), HE("send", g_send), HE("recv", g_recv), HE("recvfrom", g_recvfrom),
     HE("setsockopt", g_setsockopt), HE("getsockopt", g_getsockopt), H("inet_addr", g_inet_addr),

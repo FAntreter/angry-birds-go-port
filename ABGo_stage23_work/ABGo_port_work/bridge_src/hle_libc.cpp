@@ -8,6 +8,7 @@
 #include <fnmatch.h>
 #include <math.h>
 #include <netinet/in.h>
+#include <netdb.h>
 #include <poll.h>
 #include <pwd.h>
 #include <sched.h>
@@ -736,6 +737,83 @@ GPtr<uint8_t> g_readdir(uint32_t t) {
     return {entry};
 }
 
+// ARM32 addrinfo uses 32-bit pointers and size_t; translate every node rather
+// than exposing the host's 64-bit struct layout to guest code.
+struct GAddrInfo {
+    int32_t flags, family, socktype, protocol;
+    uint32_t addrlen, addr, canonname, next;
+};
+static_assert(sizeof(GAddrInfo) == 32);
+std::mutex g_addrinfo_mu;
+std::unordered_map<uint32_t, std::vector<uint32_t>> g_addrinfo_allocations;
+
+int32_t g_getaddrinfo(GStr node, GStr service, GPtr<const GAddrInfo> guest_hints, GPtr<uint32_t> guest_result) {
+    if (!guest_result) return EAI_FAIL;
+    *guest_result.h() = 0;
+    struct addrinfo hints{};
+    struct addrinfo* host_result = nullptr;
+    if (guest_hints) {
+        const auto& in = *guest_hints.h();
+        hints.ai_flags = in.flags;
+        hints.ai_family = in.family;
+        hints.ai_socktype = in.socktype;
+        hints.ai_protocol = in.protocol;
+    }
+    int status = getaddrinfo(node ? node.h() : nullptr, service ? service.h() : nullptr,
+                             guest_hints ? &hints : nullptr, &host_result);
+    if (status != 0) return status;
+
+    std::vector<uint32_t> allocations;
+    uint32_t head = 0, tail = 0;
+    auto allocate = [&](uint32_t bytes) -> uint32_t {
+        uint32_t address = arena::gcalloc(1, bytes);
+        if (address) allocations.push_back(address);
+        return address;
+    };
+    for (const struct addrinfo* item = host_result; item; item = item->ai_next) {
+        uint32_t guest_node = allocate(sizeof(GAddrInfo));
+        uint32_t guest_addr = item->ai_addrlen ? allocate(static_cast<uint32_t>(item->ai_addrlen)) : 0;
+        uint32_t guest_name = item->ai_canonname ? allocate(static_cast<uint32_t>(strlen(item->ai_canonname) + 1)) : 0;
+        if (!guest_node || (item->ai_addrlen && !guest_addr) || (item->ai_canonname && !guest_name)) {
+            for (uint32_t address : allocations) arena::gfree(address);
+            freeaddrinfo(host_result);
+            return EAI_MEMORY;
+        }
+        if (guest_addr) memcpy(h(guest_addr), item->ai_addr, item->ai_addrlen);
+        if (guest_name) memcpy(h(guest_name), item->ai_canonname, strlen(item->ai_canonname) + 1);
+        auto* out = hp<GAddrInfo>(guest_node);
+        out->flags = item->ai_flags;
+        out->family = item->ai_family;
+        out->socktype = item->ai_socktype;
+        out->protocol = item->ai_protocol;
+        out->addrlen = static_cast<uint32_t>(item->ai_addrlen);
+        out->addr = guest_addr;
+        out->canonname = guest_name;
+        if (!head) head = guest_node;
+        if (tail) hp<GAddrInfo>(tail)->next = guest_node;
+        tail = guest_node;
+    }
+    freeaddrinfo(host_result);
+    if (head) {
+        std::lock_guard lock(g_addrinfo_mu);
+        g_addrinfo_allocations.emplace(head, std::move(allocations));
+    }
+    *guest_result.h() = head;
+    return 0;
+}
+void g_freeaddrinfo(GPtr<GAddrInfo> result) {
+    if (!result) return;
+    std::vector<uint32_t> allocations;
+    {
+        std::lock_guard lock(g_addrinfo_mu);
+        auto it = g_addrinfo_allocations.find(result.a);
+        if (it == g_addrinfo_allocations.end()) return;
+        allocations = std::move(it->second);
+        g_addrinfo_allocations.erase(it);
+    }
+    for (uint32_t address : allocations) arena::gfree(address);
+}
+
 // ---------------------------------------------------------------- sockets (sockaddr layouts are ABI-neutral)
 int32_t g_socket(int32_t d, int32_t t, int32_t p) { return socket(d, t, p); }
 
@@ -1052,7 +1130,7 @@ const hle::Def kDefs[] = {
     HE("remove", g_remove), HE("rename", g_rename), HE("pathconf", g_pathconf), HE("getcwd", g_getcwd),
     HE("fcntl", g_fcntl), HE("ioctl", g_ioctl), HE("stat", g_stat), HE("fstat", g_fstat), HE("statfs", g_statfs),
     HE("opendir", g_opendir), HE("closedir", g_closedir), H("readdir_r", g_readdir_r), H("readdir", g_readdir),
-    HE("socket", g_socket), HE("socketpair", g_socketpair), HE("accept", g_accept), HE("listen", g_listen), HE("sendto", g_sendto), HE("shutdown", g_shutdown), HE("select", g_select), HE("bind", g_bind), HE("connect", g_connect), HE("getsockname", g_getsockname),
+    HE("getaddrinfo", g_getaddrinfo), H("freeaddrinfo", g_freeaddrinfo),\n    HE("socket", g_socket), HE("socketpair", g_socketpair), HE("accept", g_accept), HE("listen", g_listen), HE("sendto", g_sendto), HE("shutdown", g_shutdown), HE("select", g_select), HE("bind", g_bind), HE("connect", g_connect), HE("getsockname", g_getsockname),
     HE("getpeername", g_getpeername), HE("send", g_send), HE("recv", g_recv), HE("recvfrom", g_recvfrom),
     HE("setsockopt", g_setsockopt), HE("getsockopt", g_getsockopt), H("inet_addr", g_inet_addr),
     H("inet_ntop", g_inet_ntop), H("inet_pton", g_inet_pton), HE("gethostname", g_gethostname),

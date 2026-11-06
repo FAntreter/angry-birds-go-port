@@ -1217,6 +1217,14 @@ void make_data() {
         guest_signals[i] = arena::static_strdup(description ? description : "Unknown signal");
     }
     hle::add_data("sys_siglist", siglist);
+
+    // Expose a guest-width environ variable with an empty, null-terminated
+    // environment. Never hand the 64-bit host environ pointer to ARM32 code.
+    uint32_t guest_env = arena::static_alloc(sizeof(uint32_t), 4);
+    *hp<uint32_t>(guest_env) = 0;
+    uint32_t environ_var = arena::static_alloc(sizeof(uint32_t), 4);
+    *hp<uint32_t>(environ_var) = guest_env;
+    hle::add_data("environ", environ_var);
 }
 
 const hle::Def kDefs[] = {

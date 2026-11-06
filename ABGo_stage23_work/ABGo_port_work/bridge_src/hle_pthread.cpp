@@ -299,6 +299,7 @@ void* thread_main(void* p) {
  // Keep this guest layout separate from the host pthread_attr_t.
 constexpr uint32_t kGuestAttrWords = 6;
 constexpr uint32_t kGuestDefaultStackSize = 1u << 20;
+constexpr uint32_t kGuestStackMin = 2u * 4096u; // 32-bit bionic PTHREAD_STACK_MIN
 constexpr uint32_t kGuestStackGuardSize = 64u << 10;
 int32_t g_attr_init(GPtr<uint32_t> attr) {
     if (!attr) return EINVAL;
@@ -319,7 +320,7 @@ int32_t g_attr_setdetachstate(GPtr<uint32_t> attr, int32_t state) {
     return 0;
 }
 int32_t g_attr_setstacksize(GPtr<uint32_t> attr, uint32_t size) {
-    if (!attr || size < static_cast<uint32_t>(PTHREAD_STACK_MIN)) return EINVAL;
+    if (!attr || size < kGuestStackMin) return EINVAL;
     attr.h()[2] = size;
     return 0;
 }

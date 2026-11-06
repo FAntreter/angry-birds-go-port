@@ -466,7 +466,8 @@ void g_syslog(cpu::Ctx& c) {
 
 const hle::Def kDefs[] = {
     HE("fopen", g_fopen), HE("fdopen", g_fdopen), HE("tmpfile", g_tmpfile), HE("freopen", g_freopen),
-    HRAW("printf", g_printf), HRAW("fprintf", g_fprintf), HRAW("sprintf", g_sprintf), HRAW("snprintf", g_snprintf),\n    HRAW("vfprintf", g_vfprintf), HRAW("vsnprintf", g_vsnprintf), HRAW("vsprintf", g_vsprintf), HRAW("syslog", g_syslog),
+    HRAW("printf", g_printf), HRAW("fprintf", g_fprintf), HRAW("sprintf", g_sprintf), HRAW("snprintf", g_snprintf),
+    HRAW("vfprintf", g_vfprintf), HRAW("vsnprintf", g_vsnprintf), HRAW("vsprintf", g_vsprintf), HRAW("syslog", g_syslog),
     HE("fclose", g_fclose), HE("fread", g_fread), HE("fwrite", g_fwrite), HE("fputs", g_fputs),
     HE("fputc", g_fputc), HE("putc", g_fputc), HE("getc", g_getc), HE("fgetc", g_fgetc), H("putchar", g_putchar), H("puts", g_puts), HE("ungetc", g_ungetc), HE("fgets", g_fgets),
     HE("fflush", g_fflush), H("ferror", g_ferror), H("feof", g_feof), H("fileno", g_fileno),

@@ -208,12 +208,32 @@ int32_t g_android_log_write(int32_t prio, GStr tag, GStr msg) {
 
 // ARM32 variadic arguments are read from the guest core-register/stack image.
 // Never cast a guest va_list or use the host va_list: their layouts differ.
-uint32_t fmt_word(cpu::Ctx& c, int argi) { return c.arg(argi); }
-uint64_t fmt_dword(cpu::Ctx& c, int& argi) {
-    argi = (argi + 1) & ~1;
-    uint64_t lo = c.arg(argi++);
-    uint64_t hi = c.arg(argi++);
-    return lo | (hi << 32);
+struct FmtArgs {
+    cpu::Ctx& ctx;
+    int index;
+    uint32_t cursor;
+    bool from_va_list;
+
+    uint32_t word() {
+        if (!from_va_list) return ctx.arg(index++);
+        uint32_t value;
+        memcpy(&value, arena::h(cursor), sizeof(value));
+        cursor += sizeof(value);
+        return value;
+    }
+    uint64_t dword() {
+        if (!from_va_list) {
+            index = (index + 1) & ~1;
+            uint64_t lo = ctx.arg(index++);
+            uint64_t hi = ctx.arg(index++);
+            return lo | (hi << 32);
+        }
+        cursor = (cursor + 7u) & ~7u;
+        uint64_t value;
+        memcpy(&value, arena::h(cursor), sizeof(value));
+        cursor += sizeof(value);
+        return value;
+    }
 }
 template <typename T>
 bool fmt_piece(std::string& out, const std::string& spec, T value) {
@@ -224,9 +244,10 @@ bool fmt_piece(std::string& out, const std::string& spec, T value) {
     out.append(tmp.data(), static_cast<size_t>(n));
     return true;
 }
-bool fmt_guest(cpu::Ctx& c, int first_arg, const char* format, std::string& out) {
-    if (!format) return false;
-    int argi = first_arg;
+bool fmt_guest(cpu::Ctx& c, int first_arg, const char* format, std::string& out,
+               uint32_t va_cursor = 0, bool from_va_list = false) {
+    if (!format || (from_va_list && !va_cursor)) return false;
+    FmtArgs args{c, first_arg, va_cursor, from_va_list};
     for (const char* p = format; *p;) {
         if (*p != '%') {
             out.push_back(*p++);
@@ -239,7 +260,7 @@ bool fmt_guest(cpu::Ctx& c, int first_arg, const char* format, std::string& out)
         while (*p && strchr("-+ #0'", *p)) flags.push_back(*p++);
         int width = -1;
         if (*p == '*') {
-            width = static_cast<int32_t>(fmt_word(c, argi++));
+            width = static_cast<int32_t>(args.word());
             ++p;
             if (width < 0) {
                 if (width == INT_MIN) width = 1024 * 1024;
@@ -295,7 +316,7 @@ bool fmt_guest(cpu::Ctx& c, int first_arg, const char* format, std::string& out)
         switch (conv) {
         case 'd': case 'i': {
             int64_t v;
-            if (length == "ll" || length == "j") v = static_cast<int64_t>(fmt_dword(c, argi));
+            if (length == "ll" || length == "j") v = static_cast<int64_t>(args.dword());
             else v = static_cast<int32_t>(fmt_word(c, argi++));
             if (length == "ll") ok = fmt_piece(out, spec, static_cast<long long>(v));
             else if (length == "j") ok = fmt_piece(out, spec, static_cast<intmax_t>(v));
@@ -394,6 +415,39 @@ void g_snprintf(cpu::Ctx& c) {
     c.ret(static_cast<uint32_t>(out.size()));
 }
 
+// AAPCS32 va_list is a one-word structure containing a guest pointer to the
+// next argument. The cursor is guest memory; never reinterpret it as host va_list.
+void g_vfprintf(cpu::Ctx& c) {
+    const uint32_t token = c.arg(0);
+    std::string out;
+    if (!fmt_guest(c, 0, arena::hp<const char>(c.arg(1)), out, c.arg(2), true)) {
+        c.ret(static_cast<uint32_t>(-1)); return;
+    }
+    c.ret(static_cast<uint32_t>(write_guest_formatted(token, out)));
+}
+void g_vsnprintf(cpu::Ctx& c) {
+    const uint32_t dst = c.arg(0), cap = c.arg(1);
+    std::string out;
+    if (!fmt_guest(c, 0, arena::hp<const char>(c.arg(2)), out, c.arg(3), true)) {
+        c.ret(static_cast<uint32_t>(-1)); return;
+    }
+    if (cap) {
+        const size_t n = std::min(out.size(), static_cast<size_t>(cap - 1));
+        if (n) memcpy(arena::hp<char>(dst), out.data(), n);
+        arena::hp<char>(dst)[n] = '\0';
+    }
+    c.ret(static_cast<uint32_t>(out.size()));
+}
+void g_vsprintf(cpu::Ctx& c) {
+    const uint32_t dst = c.arg(0);
+    std::string out;
+    if (!fmt_guest(c, 0, arena::hp<const char>(c.arg(1)), out, c.arg(2), true)) {
+        c.ret(static_cast<uint32_t>(-1)); return;
+    }
+    memcpy(arena::hp<char>(dst), out.c_str(), out.size() + 1);
+    c.ret(static_cast<uint32_t>(out.size()));
+}
+
 void g_syslog(cpu::Ctx& c) {
     const int priority = static_cast<int32_t>(c.arg(0));
     std::string out;
@@ -412,7 +466,7 @@ void g_syslog(cpu::Ctx& c) {
 
 const hle::Def kDefs[] = {
     HE("fopen", g_fopen), HE("fdopen", g_fdopen), HE("tmpfile", g_tmpfile), HE("freopen", g_freopen),
-    HRAW("printf", g_printf), HRAW("fprintf", g_fprintf), HRAW("sprintf", g_sprintf), HRAW("snprintf", g_snprintf), HRAW("syslog", g_syslog),
+    HRAW("printf", g_printf), HRAW("fprintf", g_fprintf), HRAW("sprintf", g_sprintf), HRAW("snprintf", g_snprintf),\n    HRAW("vfprintf", g_vfprintf), HRAW("vsnprintf", g_vsnprintf), HRAW("vsprintf", g_vsprintf), HRAW("syslog", g_syslog),
     HE("fclose", g_fclose), HE("fread", g_fread), HE("fwrite", g_fwrite), HE("fputs", g_fputs),
     HE("fputc", g_fputc), HE("putc", g_fputc), HE("getc", g_getc), HE("fgetc", g_fgetc), H("putchar", g_putchar), H("puts", g_puts), HE("ungetc", g_ungetc), HE("fgets", g_fgets),
     HE("fflush", g_fflush), H("ferror", g_ferror), H("feof", g_feof), H("fileno", g_fileno),

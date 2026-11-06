@@ -174,6 +174,18 @@ GPtr<char> g_basename(GStr path) {
 }
 int32_t g_fnmatch(GStr pat, GStr str, int32_t flags) { return fnmatch(pat.h(), str.h(), flags); }
 
+// Guest strings live in the persistent arena, so putenv's retained pointer
+// remains valid for the lifetime of the emulated process.
+int32_t g_putenv(GStr assignment) {
+    if (!assignment || !strchr(assignment.h(), '=')) { errno = EINVAL; return -1; }
+    return putenv(assignment.h());
+}
+GPtr<char> g_mktemp(GPtr<char> pattern) {
+    if (!pattern) { errno = EINVAL; return {0}; }
+    char* result = mktemp(pattern.h());
+    return {result ? g(result) : 0};
+}
+
 // ---------------------------------------------------------------- wide chars (wchar_t is 32-bit on both sides)
 uint32_t g_wcslen(GPtr<const wchar_t> s) { return static_cast<uint32_t>(wcslen(s.h())); }
 GPtr<wchar_t> g_wmemchr(GPtr<const wchar_t> s, int32_t c, uint32_t n) { return {n ? g(wmemchr(s.h(), c, n)) : 0}; }
@@ -1207,7 +1219,7 @@ const hle::Def kDefs[] = {
     H("strncpy", g_strncpy), H("strlcpy", g_strlcpy), H("strcat", g_strcat), H("strncat", g_strncat), H("strchr", g_strchr),
     H("strrchr", g_strrchr), H("strstr", g_strstr), H("strpbrk", g_strpbrk), H("strcspn", g_strcspn),
     H("strdup", g_strdup), H("strtok_r", g_strtok_r), H("strerror", g_strerror), H("strerror_r", g_strerror_r),
-    H("basename", g_basename), H("fnmatch", g_fnmatch),
+    H("basename", g_basename), H("fnmatch", g_fnmatch), HE("putenv", g_putenv), H("mktemp", g_mktemp),
     H("wcslen", g_wcslen), H("wmemchr", g_wmemchr), H("wmemcmp", g_wmemcmp), H("wmemcpy", g_wmemcpy),
     H("wmemmove", g_wmemmove), H("wmemset", g_wmemset), H("wcscoll", g_wcscoll), H("wcsxfrm", g_wcsxfrm),
     H("btowc", g_btowc), H("wctob", g_wctob), H("towlower", g_towlower), H("towupper", g_towupper),

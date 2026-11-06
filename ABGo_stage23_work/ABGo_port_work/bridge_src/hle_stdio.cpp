@@ -336,6 +336,11 @@ bool fmt_guest(cpu::Ctx& c, int first_arg, const char* format, std::string& out)
             ok = fmt_piece(out, spec, reinterpret_cast<void*>(static_cast<uintptr_t>(a)));
             break;
         }
+        case 'm': {
+            spec.back() = 's';
+            ok = fmt_piece(out, spec, strerror(errno));
+            break;
+        }
         case 'f': case 'F': case 'e': case 'E': case 'g': case 'G': case 'a': case 'A': {
             double v = std::bit_cast<double>(fmt_dword(c, argi));
             ok = length == "L" ? fmt_piece(out, spec, static_cast<long double>(v)) : fmt_piece(out, spec, v);
@@ -389,9 +394,25 @@ void g_snprintf(cpu::Ctx& c) {
     c.ret(static_cast<uint32_t>(out.size()));
 }
 
+void g_syslog(cpu::Ctx& c) {
+    const int priority = static_cast<int32_t>(c.arg(0));
+    std::string out;
+    if (!fmt_guest(c, 2, arena::hp<const char>(c.arg(1)), out)) return;
+    int android_priority = 4;  // INFO
+    switch (priority & 7) {
+        case 0: case 1: case 2: android_priority = 7; break; // EMERG/ALERT/CRIT -> FATAL
+        case 3: android_priority = 6; break; // ERR
+        case 4: android_priority = 5; break; // WARNING
+        case 5: case 6: android_priority = 4; break; // NOTICE/INFO
+        case 7: android_priority = 3; break; // DEBUG
+    }
+    __android_log_write(android_priority, "absw-guest-syslog", out.c_str());
+    c.ret(0);
+}
+
 const hle::Def kDefs[] = {
     HE("fopen", g_fopen), HE("fdopen", g_fdopen), HE("tmpfile", g_tmpfile), HE("freopen", g_freopen),
-    HRAW("printf", g_printf), HRAW("fprintf", g_fprintf), HRAW("sprintf", g_sprintf), HRAW("snprintf", g_snprintf),
+    HRAW("printf", g_printf), HRAW("fprintf", g_fprintf), HRAW("sprintf", g_sprintf), HRAW("snprintf", g_snprintf), HRAW("syslog", g_syslog),
     HE("fclose", g_fclose), HE("fread", g_fread), HE("fwrite", g_fwrite), HE("fputs", g_fputs),
     HE("fputc", g_fputc), HE("putc", g_fputc), HE("getc", g_getc), HE("fgetc", g_fgetc), H("putchar", g_putchar), H("puts", g_puts), HE("ungetc", g_ungetc), HE("fgets", g_fgets),
     HE("fflush", g_fflush), H("ferror", g_ferror), H("feof", g_feof), H("fileno", g_fileno),

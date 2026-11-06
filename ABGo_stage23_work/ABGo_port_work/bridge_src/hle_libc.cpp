@@ -92,45 +92,62 @@ int32_t g_munmap(GPtr<void> addr, uint32_t) {
 }
 
 // ---------------------------------------------------------------- ARM32 non-local jumps
-// Legacy 32-bit bionic jmp_buf layout (64 words): magic, signal mask,
-// reserved words, d8-d15, FPSCR, then r4-r14. Keep this guest state separate
-// from the host C library's jmp_buf and host CPU registers.
-constexpr uint32_t kGuestJmpMagicNoMask = 0x4278f500u;
-constexpr uint32_t kGuestJmpMagicWithMask = 0x4278f501u;
+// Bionic ARM32 jmp_buf words: 0 sigflag/cookie, 1-2 64-bit signal mask,
+// 3 reserved, 4-19 d8-d15, 20 FPSCR, 21-28 r4-r11, 29 LR, 30 SP,
+// 31 checksum. We use a bridge-private cookie and Bionic-compatible checksum.
+constexpr uint32_t kGuestJmpCookieNoMask = 0x4278f500u;
+constexpr uint32_t kGuestJmpCookieWithMask = 0x4278f501u;
 constexpr size_t kGuestJmpFloatBase = 4;
 constexpr size_t kGuestJmpFpscr = 20;
 constexpr size_t kGuestJmpCoreBase = 21;
+constexpr size_t kGuestJmpLr = 29;
+constexpr size_t kGuestJmpSp = 30;
+constexpr size_t kGuestJmpChecksum = 31;
 
-uint32_t guest_blocked_signal_mask() {
+uint64_t guest_blocked_signal_mask() {
     sigset_t current{};
     if (sigprocmask(SIG_SETMASK, nullptr, &current) != 0) return 0;
-    uint32_t mask = 0;
-    for (int sig = 1; sig < 32; ++sig) {
-        if (sigismember(&current, sig) == 1) mask |= (1u << (sig - 1));
+    uint64_t mask = 0;
+    for (int sig = 1; sig <= 64; ++sig) {
+        if (sigismember(&current, sig) == 1) mask |= (uint64_t{1} << (sig - 1));
     }
     return mask;
 }
 
-void guest_restore_signal_mask(uint32_t mask) {
+void guest_restore_signal_mask(uint64_t mask) {
     sigset_t desired{};
     sigemptyset(&desired);
-    for (int sig = 1; sig < 32; ++sig) {
-        if (mask & (1u << (sig - 1))) sigaddset(&desired, sig);
+    for (int sig = 1; sig <= 64; ++sig) {
+        if (mask & (uint64_t{1} << (sig - 1))) sigaddset(&desired, sig);
     }
     (void)sigprocmask(SIG_SETMASK, &desired, nullptr);
+}
+
+uint32_t guest_jmp_checksum(const uint32_t* words) {
+    uint32_t checksum = 0;
+    for (size_t i = 0; i < kGuestJmpChecksum; ++i) checksum ^= words[i];
+    return checksum;
 }
 
 void g_sigsetjmp(cpu::Ctx& c, bool save_signal_mask) {
     const uint32_t env = c.r(0);
     if (!env) fatal("sigsetjmp called with a null guest jmp_buf");
     auto* words = arena::hp<uint32_t>(env);
-    words[0] = save_signal_mask ? kGuestJmpMagicWithMask : kGuestJmpMagicNoMask;
-    if (save_signal_mask) words[1] = guest_blocked_signal_mask();
+    words[0] = save_signal_mask ? kGuestJmpCookieWithMask : kGuestJmpCookieNoMask;
+    words[1] = words[2] = 0;
+    if (save_signal_mask) {
+        const uint64_t mask = guest_blocked_signal_mask();
+        words[1] = static_cast<uint32_t>(mask);
+        words[2] = static_cast<uint32_t>(mask >> 32);
+    }
 
     const auto& ext = c.jit->ExtRegs();
     for (size_t i = 0; i < 16; ++i) words[kGuestJmpFloatBase + i] = ext[16 + i];
     words[kGuestJmpFpscr] = c.jit->Fpscr();
-    for (size_t i = 0; i < 11; ++i) words[kGuestJmpCoreBase + i] = c.r(static_cast<int>(4 + i));
+    for (size_t i = 0; i < 8; ++i) words[kGuestJmpCoreBase + i] = c.r(static_cast<int>(4 + i));
+    words[kGuestJmpLr] = c.r(14);
+    words[kGuestJmpSp] = c.r(13);
+    words[kGuestJmpChecksum] = guest_jmp_checksum(words);
     c.ret(0);
 }
 
@@ -141,17 +158,24 @@ void g_longjmp(cpu::Ctx& c) {
     const uint32_t env = c.r(0);
     if (!env) fatal("longjmp called with a null guest jmp_buf");
     const auto* words = arena::hp<const uint32_t>(env);
-    const uint32_t magic = words[0];
-    if (magic != kGuestJmpMagicNoMask && magic != kGuestJmpMagicWithMask)
+    const uint32_t cookie = words[0];
+    if (cookie != kGuestJmpCookieNoMask && cookie != kGuestJmpCookieWithMask)
         fatal("longjmp called with an invalid or incompatible guest jmp_buf");
+    if (words[kGuestJmpChecksum] != guest_jmp_checksum(words))
+        fatal("longjmp called with a corrupted guest jmp_buf");
 
     const uint32_t value = c.r(1);
-    if (magic == kGuestJmpMagicWithMask) guest_restore_signal_mask(words[1]);
+    if (cookie == kGuestJmpCookieWithMask) {
+        const uint64_t mask = uint64_t{words[1]} | (uint64_t{words[2]} << 32);
+        guest_restore_signal_mask(mask);
+    }
 
     auto& ext = c.jit->ExtRegs();
     for (size_t i = 0; i < 16; ++i) ext[16 + i] = words[kGuestJmpFloatBase + i];
     c.jit->SetFpscr(words[kGuestJmpFpscr]);
-    for (size_t i = 0; i < 11; ++i) c.r(static_cast<int>(4 + i)) = words[kGuestJmpCoreBase + i];
+    for (size_t i = 0; i < 8; ++i) c.r(static_cast<int>(4 + i)) = words[kGuestJmpCoreBase + i];
+    c.r(14) = words[kGuestJmpLr];
+    c.r(13) = words[kGuestJmpSp];
     c.ret(value ? value : 1);
 }
 void g_siglongjmp(cpu::Ctx& c) { g_longjmp(c); }

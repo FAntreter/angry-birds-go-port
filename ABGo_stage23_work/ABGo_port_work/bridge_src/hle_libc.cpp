@@ -1126,6 +1126,26 @@ uint32_t g_dlsym(uint32_t, GStr name) {
 int32_t g_dlclose(uint32_t) { return 0; }
 uint32_t g_dlerror() { uint32_t e = t_dlerror; t_dlerror = 0; return e; }
 
+// ARM32 bionic Dl_info is four 32-bit guest pointers (16 bytes).
+struct GDlInfo { uint32_t fname, fbase, sname, saddr; };
+int32_t g_dladdr(GPtr<const void> address, GPtr<GDlInfo> info) {
+    const elf::Module* module = elf::owner(address.a);
+    if (!module) return 0;
+    if (info) {
+        GDlInfo out{};
+        out.fname = interned(module->name);
+        out.fbase = module->base;
+        uint32_t symbol_address = 0;
+        std::string symbol_name;
+        if (elf::lookup_symbol(address.a, &symbol_address, &symbol_name)) {
+            out.sname = interned(symbol_name);
+            out.saddr = symbol_address;
+        }
+        *info.h() = out;
+    }
+    return 1;
+}
+
 // ---------------------------------------------------------------- C++ runtime support
 int32_t g_cxa_atexit(uint32_t, uint32_t, uint32_t) { return 0; }
 void g_cxa_finalize(uint32_t) {}
@@ -1223,7 +1243,7 @@ const hle::Def kDefs[] = {
     H("getrandom", g_getrandom), H("sysinfo", g_sysinfo), H("usleep", g_usleep), H("sleep", g_sleep), HE("sem_init", g_sem_init), HE("sem_destroy", g_sem_destroy), HE("sem_getvalue", g_sem_getvalue), HE("sem_post", g_sem_post), HE("sem_wait", g_sem_wait), HE("sem_timedwait", g_sem_timedwait), H("get_h_errno", g_get_h_errno), H("__get_h_errno", g_get_h_errno), HE("__mmap2", g_mmap2), HRAW("qsort", g_qsort), HRAW("bsearch", g_bsearch), HRAW("__android_log_print", g_android_log_print), HRAW("__android_log_assert", g_android_log_assert), H("__system_property_get", g_system_property_get), H("sched_yield", g_sched_yield),
     H("sigaction", g_sigaction), H("sigprocmask", g_sigprocmask), HRAW("abort", g_abort), H("exit", g_exit),
     H("raise", g_raise), HRAW("__stack_chk_fail", g_stack_chk_fail), H("__assert2", g_assert2), HRAW("syscall", g_syscall),
-    H("dlopen", g_dlopen), H("dlsym", g_dlsym), H("dlclose", g_dlclose), H("dlerror", g_dlerror),
+    H("dlopen", g_dlopen), H("dlsym", g_dlsym), H("dlclose", g_dlclose), H("dlerror", g_dlerror), H("dladdr", g_dladdr),
     H("__google_potentially_blocking_region_begin", g_google_potentially_blocking_region_begin),
     H("__google_potentially_blocking_region_end", g_google_potentially_blocking_region_end),
     H("__cxa_atexit", g_cxa_atexit), H("__cxa_finalize", g_cxa_finalize), H("__errno", g_errno),

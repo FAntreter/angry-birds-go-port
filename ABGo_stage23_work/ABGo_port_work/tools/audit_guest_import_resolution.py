@@ -26,6 +26,17 @@ def symbols(path):
         (und if ndx == 'UND' else defined).add(name)
     return und, defined
 
+def relocations(path):
+    out = subprocess.check_output(['readelf', '-rW', str(path)], text=True, errors='replace')
+    found = {}
+    for line in out.splitlines():
+        fields = line.split()
+        if len(fields) >= 5 and fields[2].startswith('R_ARM_'):
+            name = fields[-1].split('@', 1)[0]
+            if name and name != '*ABS*':
+                found.setdefault(name, []).append(fields[2])
+    return found
+
 source = '\n'.join(p.read_text(errors='ignore') for p in (ROOT / 'bridge_src').glob('*') if p.is_file())
 # Function registrations use H/HE/HRAW; data imports are registered separately.
 # Include all three macros and add_data() so the audit does not mislabel errno-
@@ -39,6 +50,7 @@ iid_table = re.search(r'const char\*\s+names\[\]\s*=\s*\{(.*?)\};', opensles, re
 if iid_table:
     hle.update(re.findall(r'"([^"\n]+)"', iid_table.group(1)))
 libsyms = {p.name: symbols(p) for p in LIBS}
+librelocs = {p.name: relocations(p) for p in LIBS}
 all_guest_exports = set().union(*(defined for _, defined in libsyms.values()))
 rows=[]
 for p in LIBS:
@@ -67,7 +79,7 @@ report=['# Stage 9 — guest import resolution audit','',
 for p in LIBS:
     names=[s for lib,s,state in critical if lib==p.name]
     report.append(f'### `{p.name}` — {len(names)} unmatched names')
-    report.append(', '.join(f'`{s}`' for s in names) if names else 'No unmatched names in this static comparison.')
+    if names:\n        for s in names:\n            kinds = sorted(set(librelocs[p.name].get(s, [])))\n            detail = ', '.join(kinds) if kinds else 'no dynamic relocation (possibly dlsym/dead import)'\n            report.append(f'- `{s}` — {detail}')\n    else:\n        report.append('No unmatched names in this static comparison.')
     report.append('')
 report += ['## Interpretation and next actions','',
            '1. The OpenSL ES IID names and bridge registrations are included in this audit; interface/vtable behavior still needs runtime validation.',

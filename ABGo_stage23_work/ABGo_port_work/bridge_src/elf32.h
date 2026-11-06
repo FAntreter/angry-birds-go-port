@@ -33,5 +33,6 @@ const Module* owner(uint32_t addr);
 bool owns(uint32_t addr);
 std::string describe(uint32_t addr);
 uint32_t find_exidx(uint32_t pc, int32_t* count);
+bool lookup_symbol(uint32_t addr, uint32_t* symbol_addr, std::string* symbol_name);
 
 }  // namespace elf

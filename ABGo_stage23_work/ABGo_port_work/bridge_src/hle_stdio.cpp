@@ -234,7 +234,7 @@ struct FmtArgs {
         cursor += sizeof(value);
         return value;
     }
-}
+};
 template <typename T>
 bool fmt_piece(std::string& out, const std::string& spec, T value) {
     int n = std::snprintf(nullptr, 0, spec.c_str(), value);
@@ -280,7 +280,7 @@ bool fmt_guest(cpu::Ctx& c, int first_arg, const char* format, std::string& out,
             has_precision = true;
             ++p;
             if (*p == '*') {
-                precision = static_cast<int32_t>(fmt_word(c, argi++));
+                precision = static_cast<int32_t>(args.word());
                 ++p;
                 if (precision < 0) has_precision = false;
             } else {
@@ -299,7 +299,7 @@ bool fmt_guest(cpu::Ctx& c, int first_arg, const char* format, std::string& out,
         if (!conv) { out.append(begin, static_cast<size_t>(p - begin)); break; }
         ++p;
         if (conv == 'n') {
-            uint32_t a = fmt_word(c, argi++);
+            uint32_t a = args.word();
             if (!a) continue;
             if (length == "hh") *arena::hp<int8_t>(a) = static_cast<int8_t>(out.size());
             else if (length == "h") *arena::hp<int16_t>(a) = static_cast<int16_t>(out.size());
@@ -317,7 +317,7 @@ bool fmt_guest(cpu::Ctx& c, int first_arg, const char* format, std::string& out,
         case 'd': case 'i': {
             int64_t v;
             if (length == "ll" || length == "j") v = static_cast<int64_t>(args.dword());
-            else v = static_cast<int32_t>(fmt_word(c, argi++));
+            else v = static_cast<int32_t>(args.word());
             if (length == "ll") ok = fmt_piece(out, spec, static_cast<long long>(v));
             else if (length == "j") ok = fmt_piece(out, spec, static_cast<intmax_t>(v));
             else if (length == "l" || length == "z" || length == "t") ok = fmt_piece(out, spec, static_cast<long>(v));
@@ -326,8 +326,8 @@ bool fmt_guest(cpu::Ctx& c, int first_arg, const char* format, std::string& out,
         }
         case 'u': case 'o': case 'x': case 'X': {
             uint64_t v;
-            if (length == "ll" || length == "j") v = fmt_dword(c, argi);
-            else v = fmt_word(c, argi++);
+            if (length == "ll" || length == "j") v = args.dword();
+            else v = args.word();
             if (length == "ll") ok = fmt_piece(out, spec, static_cast<unsigned long long>(v));
             else if (length == "j") ok = fmt_piece(out, spec, static_cast<uintmax_t>(v));
             else if (length == "l" || length == "z" || length == "t") ok = fmt_piece(out, spec, static_cast<unsigned long>(v));
@@ -335,14 +335,14 @@ bool fmt_guest(cpu::Ctx& c, int first_arg, const char* format, std::string& out,
             break;
         }
         case 'c': {
-            uint32_t a = fmt_word(c, argi++);
+            uint32_t a = args.word();
             ok = length == "l"
                 ? fmt_piece(out, spec, static_cast<wint_t>(a))
                 : fmt_piece(out, spec, static_cast<int>(a));
             break;
         }
         case 's': {
-            uint32_t a = fmt_word(c, argi++);
+            uint32_t a = args.word();
             if (length == "l") {
                 const wchar_t* ws = a ? arena::hp<const wchar_t>(a) : L"(null)";
                 ok = fmt_piece(out, spec, ws);
@@ -353,7 +353,7 @@ bool fmt_guest(cpu::Ctx& c, int first_arg, const char* format, std::string& out,
             break;
         }
         case 'p': {
-            uint32_t a = fmt_word(c, argi++);
+            uint32_t a = args.word();
             ok = fmt_piece(out, spec, reinterpret_cast<void*>(static_cast<uintptr_t>(a)));
             break;
         }
@@ -363,7 +363,7 @@ bool fmt_guest(cpu::Ctx& c, int first_arg, const char* format, std::string& out,
             break;
         }
         case 'f': case 'F': case 'e': case 'E': case 'g': case 'G': case 'a': case 'A': {
-            double v = std::bit_cast<double>(fmt_dword(c, argi));
+            double v = std::bit_cast<double>(args.dword());
             ok = length == "L" ? fmt_piece(out, spec, static_cast<long double>(v)) : fmt_piece(out, spec, v);
             break;
         }

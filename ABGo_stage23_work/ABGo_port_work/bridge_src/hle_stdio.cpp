@@ -208,7 +208,7 @@ int32_t g_android_log_write(int32_t prio, GStr tag, GStr msg) {
 
 // ARM32 variadic arguments are read from the guest core-register/stack image.
 // Never cast a guest va_list or use the host va_list: their layouts differ.
-uint32_t fmt_word(cpu::Ctx& c, int& argi) { return c.arg(argi++); }
+uint32_t fmt_word(cpu::Ctx& c, int argi) { return c.arg(argi); }
 uint64_t fmt_dword(cpu::Ctx& c, int& argi) {
     argi = (argi + 1) & ~1;
     uint64_t lo = c.arg(argi++);
@@ -272,7 +272,7 @@ bool fmt_guest(cpu::Ctx& c, int first_arg, const char* format, std::string& out)
         std::string length;
         if (*p == 'h' || *p == 'l' || *p == 'z' || *p == 't' || *p == 'j' || *p == 'L') {
             length.push_back(*p++);
-            if ((*length == "h" && *p == 'h') || (*length == "l" && *p == 'l')) length.push_back(*p++);
+            if ((length == "h" && *p == 'h') || (length == "l" && *p == 'l')) length.push_back(*p++);
         }
         char conv = *p;
         if (!conv) { out.append(begin, static_cast<size_t>(p - begin)); break; }

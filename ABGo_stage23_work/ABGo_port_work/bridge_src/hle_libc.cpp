@@ -738,6 +738,37 @@ GPtr<uint8_t> g_readdir(uint32_t t) {
 
 // ---------------------------------------------------------------- sockets (sockaddr layouts are ABI-neutral)
 int32_t g_socket(int32_t d, int32_t t, int32_t p) { return socket(d, t, p); }
+
+int32_t g_accept(int32_t fd, GPtr<sockaddr> address, GPtr<socklen_t> length) {
+    return accept(fd, address ? address.h() : nullptr, length ? length.h() : nullptr);
+}
+int32_t g_listen(int32_t fd, int32_t backlog) { return listen(fd, backlog); }
+int32_t g_sendto(int32_t fd, GPtr<const void> buffer, uint32_t length, int32_t flags,
+                 GPtr<const sockaddr> address, uint32_t address_length) {
+    return static_cast<int32_t>(sendto(fd, buffer.h(), length, flags | MSG_NOSIGNAL,
+                                       address ? address.h() : nullptr, address_length));
+}
+int32_t g_shutdown(int32_t fd, int32_t how) { return shutdown(fd, how); }
+int32_t g_socketpair(int32_t domain, int32_t type, int32_t protocol, GPtr<int32_t> pair) {
+    return socketpair(domain, type, protocol, pair.h());
+}
+int32_t g_select(int32_t nfds, GPtr<uint8_t> read_bits, GPtr<uint8_t> write_bits,
+                 GPtr<uint8_t> except_bits, GPtr<GTimeval> timeout) {
+    static_assert(sizeof(fd_set) == 128, "unexpected Android fd_set ABI");
+    fd_set r{}, w{}, e{};
+    if (read_bits) memcpy(&r, read_bits.h(), sizeof(r));
+    if (write_bits) memcpy(&w, write_bits.h(), sizeof(w));
+    if (except_bits) memcpy(&e, except_bits.h(), sizeof(e));
+    struct timeval t{}, *tp = nullptr;
+    if (timeout) { t = {timeout.h()->sec, timeout.h()->usec}; tp = &t; }
+    int result = select(nfds, read_bits ? &r : nullptr, write_bits ? &w : nullptr,
+                        except_bits ? &e : nullptr, tp);
+    if (read_bits) memcpy(read_bits.h(), &r, sizeof(r));
+    if (write_bits) memcpy(write_bits.h(), &w, sizeof(w));
+    if (except_bits) memcpy(except_bits.h(), &e, sizeof(e));
+    if (timeout && tp) *timeout.h() = {static_cast<int32_t>(t.tv_sec), static_cast<int32_t>(t.tv_usec)};
+    return result;
+}
 int32_t g_bind(int32_t fd, GPtr<const sockaddr> a, uint32_t l) { return bind(fd, a.h(), l); }
 int32_t g_connect(int32_t fd, GPtr<const sockaddr> a, uint32_t l) { return connect(fd, a.h(), l); }
 int32_t g_getsockname(int32_t fd, GPtr<sockaddr> a, GPtr<socklen_t> l) { return getsockname(fd, a.h(), l.h()); }
@@ -1021,7 +1052,7 @@ const hle::Def kDefs[] = {
     HE("remove", g_remove), HE("rename", g_rename), HE("pathconf", g_pathconf), HE("getcwd", g_getcwd),
     HE("fcntl", g_fcntl), HE("ioctl", g_ioctl), HE("stat", g_stat), HE("fstat", g_fstat), HE("statfs", g_statfs),
     HE("opendir", g_opendir), HE("closedir", g_closedir), H("readdir_r", g_readdir_r), H("readdir", g_readdir),
-    HE("socket", g_socket), HE("bind", g_bind), HE("connect", g_connect), HE("getsockname", g_getsockname),
+    HE("socket", g_socket), HE("socketpair", g_socketpair), HE("accept", g_accept), HE("listen", g_listen), HE("sendto", g_sendto), HE("shutdown", g_shutdown), HE("select", g_select), HE("bind", g_bind), HE("connect", g_connect), HE("getsockname", g_getsockname),
     HE("getpeername", g_getpeername), HE("send", g_send), HE("recv", g_recv), HE("recvfrom", g_recvfrom),
     HE("setsockopt", g_setsockopt), HE("getsockopt", g_getsockopt), H("inet_addr", g_inet_addr),
     H("inet_ntop", g_inet_ntop), H("inet_pton", g_inet_pton), HE("gethostname", g_gethostname),

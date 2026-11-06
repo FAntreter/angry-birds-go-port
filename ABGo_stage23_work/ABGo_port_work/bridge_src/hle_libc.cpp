@@ -850,6 +850,7 @@ uint32_t copy_hostent(const struct hostent* in) {
     return block;
 }
 uint32_t g_gethostbyname(GStr name) { return copy_hostent(gethostbyname(name.h())); }
+uint32_t g_gethostbyname2(GStr name, int32_t family) { return copy_hostent(gethostbyname2(name.h(), family)); }
 uint32_t g_gethostbyaddr(GPtr<const void> address, uint32_t length, int32_t type) {
     return copy_hostent(gethostbyaddr(address.h(), static_cast<socklen_t>(length), type));
 }
@@ -1204,7 +1205,7 @@ const hle::Def kDefs[] = {
     HE("fcntl", g_fcntl), HE("ioctl", g_ioctl), HE("stat", g_stat), HE("fstat", g_fstat), HE("statfs", g_statfs),
     HE("opendir", g_opendir), HE("closedir", g_closedir), H("readdir_r", g_readdir_r), H("readdir", g_readdir),
     HE("getaddrinfo", g_getaddrinfo), H("freeaddrinfo", g_freeaddrinfo),
-    H("gethostbyname", g_gethostbyname), H("gethostbyaddr", g_gethostbyaddr), H("getnameinfo", g_getnameinfo),
+    H("gethostbyname", g_gethostbyname), H("gethostbyname2", g_gethostbyname2), H("gethostbyaddr", g_gethostbyaddr), H("getnameinfo", g_getnameinfo),
     H("getprotobyname", g_getprotobyname), H("getprotobynumber", g_getprotobynumber),
     HE("socket", g_socket), HE("socketpair", g_socketpair), HE("accept", g_accept), HE("listen", g_listen), HE("sendto", g_sendto), HE("shutdown", g_shutdown), HE("select", g_select), HE("bind", g_bind), HE("connect", g_connect), HE("getsockname", g_getsockname),
     HE("getpeername", g_getpeername), HE("send", g_send), HE("recv", g_recv), HE("recvfrom", g_recvfrom),

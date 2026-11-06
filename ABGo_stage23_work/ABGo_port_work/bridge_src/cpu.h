@@ -43,6 +43,8 @@ inline uint64_t call(uint32_t fn, std::initializer_list<uint32_t> words) {
 }
 
 uint32_t thread_tls();        // guest TLS block of the calling host thread
+uint32_t thread_stack_base(); // lowest address of the calling thread's guest stack
+uint32_t thread_stack_size(); // size of the calling thread's guest stack
 uint32_t thread_errno_addr(); // guest errno slot of the calling host thread
 void set_guest_errno(int e);
 

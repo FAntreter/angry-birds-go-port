@@ -178,7 +178,7 @@ int32_t g_fnmatch(GStr pat, GStr str, int32_t flags) { return fnmatch(pat.h(), s
 // remains valid for the lifetime of the emulated process.
 int32_t g_putenv(GStr assignment) {
     if (!assignment || !strchr(assignment.h(), '=')) { errno = EINVAL; return -1; }
-    return putenv(assignment.h());
+    return putenv(const_cast<char*>(assignment.h()));
 }
 GPtr<char> g_mktemp(GPtr<char> pattern) {
     if (!pattern) { errno = EINVAL; return {0}; }

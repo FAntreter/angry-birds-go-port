@@ -259,6 +259,8 @@ struct GThread {
     uint32_t id;
     pthread_t host{};
     uint32_t start = 0, arg = 0, result = 0;
+    std::atomic<uint32_t> guest_stack_base{0};
+    std::atomic<uint32_t> guest_stack_size{0};
 };
 std::mutex g_thr_mu;
 std::unordered_map<uint32_t, std::shared_ptr<GThread>> g_threads;
@@ -266,8 +268,10 @@ uint32_t g_next_tid = 0x1000;
 thread_local uint32_t t_self = 0;
 
 uint32_t register_current() {
-    std::lock_guard l(g_thr_mu);
     auto t = std::make_shared<GThread>();
+    t->guest_stack_base.store(cpu::thread_stack_base(), std::memory_order_release);
+    t->guest_stack_size.store(cpu::thread_stack_size(), std::memory_order_release);
+    std::lock_guard l(g_thr_mu);
     t->id = g_next_tid++;
     t->host = pthread_self();
     g_threads[t->id] = t;
@@ -283,17 +287,32 @@ void* thread_main(void* p) {
     auto t = *static_cast<std::shared_ptr<GThread>*>(p);
     delete static_cast<std::shared_ptr<GThread>*>(p);
     t_self = t->id;
+    t->guest_stack_base.store(cpu::thread_stack_base(), std::memory_order_release);
+    t->guest_stack_size.store(cpu::thread_stack_size(), std::memory_order_release);
     t->result = cpu::run_thread_entry(t->start, t->arg);
     run_key_destructors();
     return nullptr;
 }
 
+// The target's 32-bit bionic pthread_attr_t is six 32-bit words:
+ // flags, stack_base, stack_size, guard_size, sched_policy, sched_priority.
+ // Keep this guest layout separate from the host pthread_attr_t.
+constexpr uint32_t kGuestAttrWords = 6;
+constexpr uint32_t kGuestDefaultStackSize = 1u << 20;
+constexpr uint32_t kGuestStackGuardSize = 64u << 10;
 int32_t g_attr_init(GPtr<uint32_t> attr) {
     if (!attr) return EINVAL;
-    memset(attr.h(), 0, 36);
+    memset(attr.h(), 0, kGuestAttrWords * sizeof(uint32_t));
+    attr.h()[2] = kGuestDefaultStackSize;
+    attr.h()[3] = 4096;
+    attr.h()[4] = SCHED_OTHER;
     return 0;
 }
-int32_t g_attr_destroy(GPtr<uint32_t>) { return 0; }
+int32_t g_attr_destroy(GPtr<uint32_t> attr) {
+    if (!attr) return EINVAL;
+    memset(attr.h(), 0x42, kGuestAttrWords * sizeof(uint32_t));
+    return 0;
+}
 int32_t g_attr_setdetachstate(GPtr<uint32_t> attr, int32_t state) {
     if (!attr || (state != PTHREAD_CREATE_JOINABLE && state != PTHREAD_CREATE_DETACHED)) return EINVAL;
     attr.h()[0] = (attr.h()[0] & ~1u) | (state == PTHREAD_CREATE_DETACHED ? 1u : 0u);
@@ -301,12 +320,32 @@ int32_t g_attr_setdetachstate(GPtr<uint32_t> attr, int32_t state) {
 }
 int32_t g_attr_setstacksize(GPtr<uint32_t> attr, uint32_t size) {
     if (!attr || size < static_cast<uint32_t>(PTHREAD_STACK_MIN)) return EINVAL;
-    attr.h()[1] = size;
+    attr.h()[2] = size;
     return 0;
 }
 int32_t g_attr_getstacksize(GPtr<const uint32_t> attr, GPtr<uint32_t> size) {
     if (!attr || !size) return EINVAL;
-    *size.h() = attr.h()[1];
+    *size.h() = attr.h()[2];
+    return 0;
+}
+int32_t g_attr_getstack(GPtr<const uint32_t> attr, GPtr<uint32_t> stack_base, GPtr<uint32_t> stack_size) {
+    if (!attr || !stack_base || !stack_size) return EINVAL;
+    *stack_base.h() = attr.h()[1];
+    *stack_size.h() = attr.h()[2];
+    return 0;
+}
+int32_t g_pthread_getattr_np(uint32_t id, GPtr<uint32_t> attr) {
+    if (!attr) return EINVAL;
+    auto t = find_thread(id);
+    if (!t) return ESRCH;
+    const uint32_t base = t->guest_stack_base.load(std::memory_order_acquire);
+    const uint32_t size = t->guest_stack_size.load(std::memory_order_acquire);
+    if (!base || !size) return ESRCH; // the guest execution stack has not been allocated yet
+    memset(attr.h(), 0, kGuestAttrWords * sizeof(uint32_t));
+    attr.h()[1] = base;
+    attr.h()[2] = size;
+    attr.h()[3] = kGuestStackGuardSize;
+    attr.h()[4] = SCHED_OTHER;
     return 0;
 }
 int32_t g_pthread_create(GPtr<uint32_t> out, GPtr<const uint32_t> attr, uint32_t start, uint32_t arg) {
@@ -320,7 +359,7 @@ int32_t g_pthread_create(GPtr<uint32_t> out, GPtr<const uint32_t> attr, uint32_t
     }
     pthread_attr_t a;
     pthread_attr_init(&a);
-    size_t host_stack = attr && attr.h()[1] ? attr.h()[1] : 512 * 1024;
+    size_t host_stack = attr && attr.h()[2] ? attr.h()[2] : kGuestDefaultStackSize;
     if (host_stack < static_cast<size_t>(PTHREAD_STACK_MIN)) host_stack = PTHREAD_STACK_MIN;
     pthread_attr_setstacksize(&a, host_stack);  // guest-requested size, clamped to host minimum
     if (attr && (attr.h()[0] & 1)) pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
@@ -389,7 +428,7 @@ const hle::Def kDefs[] = {
     H("pthread_getspecific", g_getspecific), H("pthread_setspecific", g_setspecific),
     H("pthread_attr_init", g_attr_init), H("pthread_attr_destroy", g_attr_destroy),
     H("pthread_attr_setdetachstate", g_attr_setdetachstate), H("pthread_attr_setstacksize", g_attr_setstacksize),
-    H("pthread_attr_getstacksize", g_attr_getstacksize),
+    H("pthread_attr_getstacksize", g_attr_getstacksize), H("pthread_attr_getstack", g_attr_getstack),\n    H("pthread_getattr_np", g_pthread_getattr_np),
     H("pthread_create", g_pthread_create), H("pthread_join", g_pthread_join), H("pthread_detach", g_pthread_detach),
     H("pthread_once", g_pthread_once),
     H("pthread_self", g_pthread_self), H("pthread_equal", g_pthread_equal),

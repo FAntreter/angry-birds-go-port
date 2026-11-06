@@ -200,8 +200,180 @@ int32_t g_android_log_write(int32_t prio, GStr tag, GStr msg) {
     return __android_log_write(prio, tag ? tag.h() : "absw-guest", msg ? msg.h() : "");
 }
 
+
+// ARM32 variadic arguments are read from the guest core-register/stack image.
+// Never cast a guest va_list or use the host va_list: their layouts differ.
+uint32_t fmt_word(cpu::Ctx& c, int& argi) { return c.arg(argi++); }
+uint64_t fmt_dword(cpu::Ctx& c, int& argi) {
+    argi = (argi + 1) & ~1;
+    uint64_t lo = c.arg(argi++);
+    uint64_t hi = c.arg(argi++);
+    return lo | (hi << 32);
+}
+template <typename T>
+bool fmt_piece(std::string& out, const std::string& spec, T value) {
+    int n = std::snprintf(nullptr, 0, spec.c_str(), value);
+    if (n < 0 || n > 1024 * 1024 || out.size() + static_cast<size_t>(n) > 1024 * 1024) return false;
+    std::vector<char> tmp(static_cast<size_t>(n) + 1);
+    std::snprintf(tmp.data(), tmp.size(), spec.c_str(), value);
+    out.append(tmp.data(), static_cast<size_t>(n));
+    return true;
+}
+bool fmt_guest(cpu::Ctx& c, int first_arg, const char* format, std::string& out) {
+    if (!format) return false;
+    int argi = first_arg;
+    for (const char* p = format; *p;) {
+        if (*p != '%') {
+            out.push_back(*p++);
+            if (out.size() > 1024 * 1024) return false;
+            continue;
+        }
+        const char* begin = p++;
+        if (*p == '%') { out.push_back('%'); ++p; continue; }
+        std::string flags;
+        while (*p && strchr("-+ #0'", *p)) flags.push_back(*p++);
+        int width = -1;
+        if (*p == '*') {
+            width = static_cast<int32_t>(fmt_word(c, argi++));
+            ++p;
+            if (width < 0) {
+                if (width == INT_MIN) width = 1024 * 1024;
+                else width = -width;
+                if (flags.find('-') == std::string::npos) flags.push_back('-');
+                flags.erase(std::remove(flags.begin(), flags.end(), '0'), flags.end());
+            }
+        } else if (*p >= '0' && *p <= '9') {
+            width = 0;
+            while (*p >= '0' && *p <= '9') {
+                width = std::min(1024 * 1024, width * 10 + (*p++ - '0'));
+            }
+        }
+        bool has_precision = false;
+        int precision = -1;
+        if (*p == '.') {
+            has_precision = true;
+            ++p;
+            if (*p == '*') {
+                precision = static_cast<int32_t>(fmt_word(c, argi++));
+                ++p;
+                if (precision < 0) has_precision = false;
+            } else {
+                precision = 0;
+                while (*p >= '0' && *p <= '9') {
+                    precision = std::min(1024 * 1024, precision * 10 + (*p++ - '0'));
+                }
+            }
+        }
+        std::string length;
+        if (*p == 'h' || *p == 'l' || *p == 'z' || *p == 't' || *p == 'j' || *p == 'L') {
+            length.push_back(*p++);
+            if ((*length == "h" && *p == 'h') || (*length == "l" && *p == 'l')) length.push_back(*p++);
+        }
+        char conv = *p;
+        if (!conv) { out.append(begin, static_cast<size_t>(p - begin)); break; }
+        ++p;
+        if (conv == 'n') {
+            uint32_t a = fmt_word(c, argi++);
+            if (!a) continue;
+            if (length == "hh") *arena::hp<int8_t>(a) = static_cast<int8_t>(out.size());
+            else if (length == "h") *arena::hp<int16_t>(a) = static_cast<int16_t>(out.size());
+            else if (length == "ll" || length == "j") *arena::hp<int64_t>(a) = static_cast<int64_t>(out.size());
+            else *arena::hp<int32_t>(a) = static_cast<int32_t>(out.size());
+            continue;
+        }
+        std::string spec = "%" + flags;
+        if (width >= 0) spec += std::to_string(width);
+        if (has_precision) spec += "." + std::to_string(precision);
+        spec += length;
+        spec.push_back(conv);
+        bool ok = true;
+        switch (conv) {
+        case 'd': case 'i': {
+            int64_t v;
+            if (length == "ll" || length == "j") v = static_cast<int64_t>(fmt_dword(c, argi));
+            else v = static_cast<int32_t>(fmt_word(c, argi++));
+            if (length == "ll" || length == "j") ok = fmt_piece(out, spec, static_cast<long long>(v));
+            else if (length == "l" || length == "z" || length == "t") ok = fmt_piece(out, spec, static_cast<long>(v));
+            else ok = fmt_piece(out, spec, static_cast<int>(v));
+            break;
+        }
+        case 'u': case 'o': case 'x': case 'X': {
+            uint64_t v;
+            if (length == "ll" || length == "j") v = fmt_dword(c, argi);
+            else v = fmt_word(c, argi++);
+            if (length == "ll" || length == "j") ok = fmt_piece(out, spec, static_cast<unsigned long long>(v));
+            else if (length == "l" || length == "z" || length == "t") ok = fmt_piece(out, spec, static_cast<unsigned long>(v));
+            else ok = fmt_piece(out, spec, static_cast<unsigned int>(v));
+            break;
+        }
+        case 'c': ok = fmt_piece(out, spec, static_cast<int>(fmt_word(c, argi++))); break;
+        case 's': {
+            uint32_t a = fmt_word(c, argi++);
+            const char* s = a ? arena::hp<const char>(a) : "(null)";
+            ok = fmt_piece(out, spec, s);
+            break;
+        }
+        case 'p': {
+            uint32_t a = fmt_word(c, argi++);
+            ok = fmt_piece(out, spec, reinterpret_cast<void*>(static_cast<uintptr_t>(a)));
+            break;
+        }
+        case 'f': case 'F': case 'e': case 'E': case 'g': case 'G': case 'a': case 'A': {
+            double v = std::bit_cast<double>(fmt_dword(c, argi));
+            ok = length == "L" ? fmt_piece(out, spec, static_cast<long double>(v)) : fmt_piece(out, spec, v);
+            break;
+        }
+        default:
+            out.append(begin, static_cast<size_t>(p - begin));
+            break;
+        }
+        if (!ok) return false;
+    }
+    return true;
+}
+int write_guest_formatted(uint32_t token, const std::string& out) {
+    HostFile* hf = lookup(token);
+    if (!hf) return -1;
+    if (!hf->f) {
+        log_write(hf, out.data(), out.size());
+        return static_cast<int>(out.size());
+    }
+    size_t n = fwrite(out.data(), 1, out.size(), hf->f);
+    sync(token, hf);
+    return n == out.size() ? static_cast<int>(n) : -1;
+}
+void g_printf(cpu::Ctx& c) {
+    std::string out;
+    if (!fmt_guest(c, 1, arena::hp<const char>(c.arg(0)), out)) { c.ret(static_cast<uint32_t>(-1)); return; }
+    c.ret(static_cast<uint32_t>(write_guest_formatted(g_sf + kFileSize, out)));
+}
+void g_fprintf(cpu::Ctx& c) {
+    std::string out;
+    if (!fmt_guest(c, 2, arena::hp<const char>(c.arg(1)), out)) { c.ret(static_cast<uint32_t>(-1)); return; }
+    c.ret(static_cast<uint32_t>(write_guest_formatted(c.arg(0), out)));
+}
+void g_sprintf(cpu::Ctx& c) {
+    uint32_t dst = c.arg(0);
+    std::string out;
+    if (!fmt_guest(c, 2, arena::hp<const char>(c.arg(1)), out)) { c.ret(static_cast<uint32_t>(-1)); return; }
+    memcpy(arena::hp<char>(dst), out.c_str(), out.size() + 1);
+    c.ret(static_cast<uint32_t>(out.size()));
+}
+void g_snprintf(cpu::Ctx& c) {
+    uint32_t dst = c.arg(0), cap = c.arg(1);
+    std::string out;
+    if (!fmt_guest(c, 3, arena::hp<const char>(c.arg(2)), out)) { c.ret(static_cast<uint32_t>(-1)); return; }
+    if (cap) {
+        size_t n = std::min(out.size(), static_cast<size_t>(cap - 1));
+        if (n) memcpy(arena::hp<char>(dst), out.data(), n);
+        arena::hp<char>(dst)[n] = '\0';
+    }
+    c.ret(static_cast<uint32_t>(out.size()));
+}
+
 const hle::Def kDefs[] = {
     HE("fopen", g_fopen), HE("fdopen", g_fdopen), HE("tmpfile", g_tmpfile), HE("freopen", g_freopen),
+    HRAW("printf", g_printf), HRAW("fprintf", g_fprintf), HRAW("sprintf", g_sprintf), HRAW("snprintf", g_snprintf),
     HE("fclose", g_fclose), HE("fread", g_fread), HE("fwrite", g_fwrite), HE("fputs", g_fputs),
     HE("fputc", g_fputc), HE("putc", g_fputc), HE("getc", g_getc), HE("fgetc", g_fgetc), H("putchar", g_putchar), H("puts", g_puts), HE("ungetc", g_ungetc), HE("fgets", g_fgets),
     HE("fflush", g_fflush), H("ferror", g_ferror), H("feof", g_feof), H("fileno", g_fileno),

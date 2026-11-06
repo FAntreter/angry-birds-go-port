@@ -254,6 +254,19 @@ const Module* owner(uint32_t addr) {
 
 bool owns(uint32_t addr) { return owner(addr) != nullptr; }
 
+bool lookup_symbol(uint32_t addr, uint32_t* symbol_addr, std::string* symbol_name) {
+    const Module* m = owner(addr);
+    if (!m || m->funcs.empty()) return false;
+    const uint32_t query = addr & ~1u;
+    auto it = std::upper_bound(m->funcs.begin(), m->funcs.end(),
+                               std::make_pair(query, std::string("\\xff")));
+    if (it == m->funcs.begin()) return false;
+    --it;
+    if (symbol_addr) *symbol_addr = it->first;
+    if (symbol_name) *symbol_name = it->second;
+    return true;
+}
+
 std::string describe(uint32_t addr) {
     char buf[256];
     if (const Module* m = owner(addr)) {

@@ -3,7 +3,12 @@
 #include <stdio.h>
 #include <wchar.h>
 
+#include <algorithm>
+#include <bit>
+#include <climits>
+#include <cstdint>
 #include <mutex>
+#include <vector>
 #include <string>
 #include <unordered_map>
 
@@ -292,7 +297,8 @@ bool fmt_guest(cpu::Ctx& c, int first_arg, const char* format, std::string& out)
             int64_t v;
             if (length == "ll" || length == "j") v = static_cast<int64_t>(fmt_dword(c, argi));
             else v = static_cast<int32_t>(fmt_word(c, argi++));
-            if (length == "ll" || length == "j") ok = fmt_piece(out, spec, static_cast<long long>(v));
+            if (length == "ll") ok = fmt_piece(out, spec, static_cast<long long>(v));
+            else if (length == "j") ok = fmt_piece(out, spec, static_cast<intmax_t>(v));
             else if (length == "l" || length == "z" || length == "t") ok = fmt_piece(out, spec, static_cast<long>(v));
             else ok = fmt_piece(out, spec, static_cast<int>(v));
             break;
@@ -301,7 +307,8 @@ bool fmt_guest(cpu::Ctx& c, int first_arg, const char* format, std::string& out)
             uint64_t v;
             if (length == "ll" || length == "j") v = fmt_dword(c, argi);
             else v = fmt_word(c, argi++);
-            if (length == "ll" || length == "j") ok = fmt_piece(out, spec, static_cast<unsigned long long>(v));
+            if (length == "ll") ok = fmt_piece(out, spec, static_cast<unsigned long long>(v));
+            else if (length == "j") ok = fmt_piece(out, spec, static_cast<uintmax_t>(v));
             else if (length == "l" || length == "z" || length == "t") ok = fmt_piece(out, spec, static_cast<unsigned long>(v));
             else ok = fmt_piece(out, spec, static_cast<unsigned int>(v));
             break;

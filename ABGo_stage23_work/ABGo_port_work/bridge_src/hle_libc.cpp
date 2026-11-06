@@ -1134,7 +1134,7 @@ int32_t g_dladdr(GPtr<const void> address, GPtr<GDlInfo> info) {
     if (info) {
         GDlInfo out{};
         out.fname = interned(module->name);
-        out.fbase = module->base;
+        out.fbase = module->bias;
         uint32_t symbol_address = 0;
         std::string symbol_name;
         if (elf::lookup_symbol(address.a, &symbol_address, &symbol_name)) {

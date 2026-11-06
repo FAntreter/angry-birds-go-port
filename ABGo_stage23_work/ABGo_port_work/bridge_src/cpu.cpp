@@ -473,6 +473,8 @@ uint64_t call(uint32_t fn, const std::vector<uint32_t>& words) {
 }
 
 uint32_t thread_tls() { return state().tls; }
+uint32_t thread_stack_base() { return state().stack_top - kStackSize; }
+uint32_t thread_stack_size() { return kStackSize; }
 uint32_t thread_errno_addr() { return state().tls + 8; }  // TLS_SLOT_ERRNO
 void set_guest_errno(int e) { *arena::hp<int32_t>(thread_errno_addr()) = e; }
 

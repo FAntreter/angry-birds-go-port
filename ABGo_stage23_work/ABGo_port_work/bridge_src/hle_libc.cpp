@@ -22,6 +22,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/statfs.h>
+#include <sys/sendfile.h>
 #include <sys/sysinfo.h>
 #include <sys/syscall.h>
 #include <sys/system_properties.h>
@@ -571,6 +572,21 @@ int32_t g_write(int32_t fd, GPtr<const void> b, uint32_t n) { return static_cast
 int32_t g_lseek(int32_t fd, int32_t off, int32_t whence) { return static_cast<int32_t>(lseek(fd, off, whence)); }
 int64_t g_lseek64(int32_t fd, int64_t off, int32_t whence) { return static_cast<int64_t>(lseek(fd, static_cast<off_t>(off), whence)); }
 int32_t g_fsync(int32_t fd) { return fsync(fd); }
+// The guest is ARM32 bionic: off_t is a signed 32-bit value. The ARM64
+// host uses a 64-bit off_t, so translate the optional offset explicitly.
+int32_t g_sendfile(int32_t out_fd, int32_t in_fd, GPtr<int32_t> guest_offset, uint32_t count) {
+    off_t host_offset = 0;
+    off_t* host_offset_ptr = nullptr;
+    if (guest_offset) {
+        host_offset = static_cast<off_t>(*guest_offset.h());
+        host_offset_ptr = &host_offset;
+    }
+    ssize_t result = sendfile(out_fd, in_fd, host_offset_ptr, static_cast<size_t>(count));
+    if (result >= 0 && guest_offset) {
+        *guest_offset.h() = static_cast<int32_t>(host_offset);
+    }
+    return static_cast<int32_t>(result);
+}
 struct GuestRlimit { uint32_t cur, max; };
 int32_t g_getrlimit(int32_t resource, GPtr<GuestRlimit> out) {
     struct rlimit host{};
@@ -1257,7 +1273,7 @@ const hle::Def kDefs[] = {
     H("localtime_r", g_localtime_r), H("gmtime", g_gmtime), H("localtime", g_localtime), H("mktime", g_mktime),
     H("strftime", g_strftime), H("wcsftime", g_wcsftime), HE("utime", g_utime), HE("utimes", g_utimes),
     HE("open", g_open), HE("close", g_close), HE("read", g_read), HE("write", g_write), HE("lseek", g_lseek), HE("lseek64", g_lseek64),
-    HE("fsync", g_fsync), HE("getrlimit", g_getrlimit), HE("setrlimit", g_setrlimit), HE("uname", g_uname), HE("flock", g_flock), HE("dup", g_dup), HE("dup2", g_dup2), HE("fchmod", g_fchmod), HE("fchown", g_fchown), HE("ftruncate", g_ftruncate), HE("chdir", g_chdir), HE("readlink", g_readlink), HE("gettid", g_gettid), HE("pipe", g_pipe), HE("poll", g_poll), HE("writev", g_writev), HE("access", g_access),
+    HE("fsync", g_fsync), HE("sendfile", g_sendfile), HE("getrlimit", g_getrlimit), HE("setrlimit", g_setrlimit), HE("uname", g_uname), HE("flock", g_flock), HE("dup", g_dup), HE("dup2", g_dup2), HE("fchmod", g_fchmod), HE("fchown", g_fchown), HE("ftruncate", g_ftruncate), HE("chdir", g_chdir), HE("readlink", g_readlink), HE("gettid", g_gettid), HE("pipe", g_pipe), HE("poll", g_poll), HE("writev", g_writev), HE("access", g_access),
     HE("chmod", g_chmod), HE("mkdir", g_mkdir), HE("rmdir", g_rmdir), HE("unlink", g_unlink),
     HE("remove", g_remove), HE("rename", g_rename), HE("pathconf", g_pathconf), HE("getcwd", g_getcwd),
     HE("fcntl", g_fcntl), HE("ioctl", g_ioctl), HE("stat", g_stat), HE("fstat", g_fstat), HE("statfs", g_statfs),

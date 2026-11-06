@@ -1222,7 +1222,7 @@ const hle::Def kDefs[] = {
     H("setlocale", g_setlocale), H("sysconf", g_sysconf), H("getauxval", g_getauxval),
     H("getrandom", g_getrandom), H("sysinfo", g_sysinfo), H("usleep", g_usleep), H("sleep", g_sleep), HE("sem_init", g_sem_init), HE("sem_destroy", g_sem_destroy), HE("sem_getvalue", g_sem_getvalue), HE("sem_post", g_sem_post), HE("sem_wait", g_sem_wait), HE("sem_timedwait", g_sem_timedwait), H("get_h_errno", g_get_h_errno), H("__get_h_errno", g_get_h_errno), HE("__mmap2", g_mmap2), HRAW("qsort", g_qsort), HRAW("bsearch", g_bsearch), HRAW("__android_log_print", g_android_log_print), HRAW("__android_log_assert", g_android_log_assert), H("__system_property_get", g_system_property_get), H("sched_yield", g_sched_yield),
     H("sigaction", g_sigaction), H("sigprocmask", g_sigprocmask), HRAW("abort", g_abort), H("exit", g_exit),
-    H("raise", g_raise), HRAW("__stack_chk_fail", g_stack_chk_fail), H("__assert2", g_assert2), H("syscall", g_syscall),
+    H("raise", g_raise), HRAW("__stack_chk_fail", g_stack_chk_fail), H("__assert2", g_assert2), HRAW("syscall", g_syscall),
     H("dlopen", g_dlopen), H("dlsym", g_dlsym), H("dlclose", g_dlclose), H("dlerror", g_dlerror),
     H("__google_potentially_blocking_region_begin", g_google_potentially_blocking_region_begin),
     H("__google_potentially_blocking_region_end", g_google_potentially_blocking_region_end),

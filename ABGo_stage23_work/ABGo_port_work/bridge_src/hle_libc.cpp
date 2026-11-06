@@ -29,6 +29,7 @@
 #include <sys/time.h>
 #include <sys/uio.h>
 #include <linux/futex.h>
+#include <dynarmic/interface/A32/a32.h>
 #include <time.h>
 #include <unistd.h>
 #include <utime.h>
@@ -89,6 +90,71 @@ int32_t g_munmap(GPtr<void> addr, uint32_t) {
     if (g_mmaps.erase(addr.a)) arena::gfree(addr.a);
     return 0;
 }
+
+// ---------------------------------------------------------------- ARM32 non-local jumps
+// Legacy 32-bit bionic jmp_buf layout (64 words): magic, signal mask,
+// reserved words, d8-d15, FPSCR, then r4-r14. Keep this guest state separate
+// from the host C library's jmp_buf and host CPU registers.
+constexpr uint32_t kGuestJmpMagicNoMask = 0x4278f500u;
+constexpr uint32_t kGuestJmpMagicWithMask = 0x4278f501u;
+constexpr size_t kGuestJmpFloatBase = 4;
+constexpr size_t kGuestJmpFpscr = 20;
+constexpr size_t kGuestJmpCoreBase = 21;
+
+uint32_t guest_blocked_signal_mask() {
+    sigset_t current{};
+    if (sigprocmask(SIG_SETMASK, nullptr, &current) != 0) return 0;
+    uint32_t mask = 0;
+    for (int sig = 1; sig < 32; ++sig) {
+        if (sigismember(&current, sig) == 1) mask |= (1u << (sig - 1));
+    }
+    return mask;
+}
+
+void guest_restore_signal_mask(uint32_t mask) {
+    sigset_t desired{};
+    sigemptyset(&desired);
+    for (int sig = 1; sig < 32; ++sig) {
+        if (mask & (1u << (sig - 1))) sigaddset(&desired, sig);
+    }
+    (void)sigprocmask(SIG_SETMASK, &desired, nullptr);
+}
+
+void g_sigsetjmp(cpu::Ctx& c, bool save_signal_mask) {
+    const uint32_t env = c.r(0);
+    if (!env) fatal("sigsetjmp called with a null guest jmp_buf");
+    auto* words = arena::hp<uint32_t>(env);
+    words[0] = save_signal_mask ? kGuestJmpMagicWithMask : kGuestJmpMagicNoMask;
+    if (save_signal_mask) words[1] = guest_blocked_signal_mask();
+
+    const auto& ext = c.jit->ExtRegs();
+    for (size_t i = 0; i < 16; ++i) words[kGuestJmpFloatBase + i] = ext[16 + i];
+    words[kGuestJmpFpscr] = c.jit->Fpscr();
+    for (size_t i = 0; i < 11; ++i) words[kGuestJmpCoreBase + i] = c.r(static_cast<int>(4 + i));
+    c.ret(0);
+}
+
+void g_setjmp(cpu::Ctx& c) { g_sigsetjmp(c, true); }
+void g_sigsetjmp_raw(cpu::Ctx& c) { g_sigsetjmp(c, c.r(1) != 0); }
+
+void g_longjmp(cpu::Ctx& c) {
+    const uint32_t env = c.r(0);
+    if (!env) fatal("longjmp called with a null guest jmp_buf");
+    const auto* words = arena::hp<const uint32_t>(env);
+    const uint32_t magic = words[0];
+    if (magic != kGuestJmpMagicNoMask && magic != kGuestJmpMagicWithMask)
+        fatal("longjmp called with an invalid or incompatible guest jmp_buf");
+
+    const uint32_t value = c.r(1);
+    if (magic == kGuestJmpMagicWithMask) guest_restore_signal_mask(words[1]);
+
+    auto& ext = c.jit->ExtRegs();
+    for (size_t i = 0; i < 16; ++i) ext[16 + i] = words[kGuestJmpFloatBase + i];
+    c.jit->SetFpscr(words[kGuestJmpFpscr]);
+    for (size_t i = 0; i < 11; ++i) c.r(static_cast<int>(4 + i)) = words[kGuestJmpCoreBase + i];
+    c.ret(value ? value : 1);
+}
+void g_siglongjmp(cpu::Ctx& c) { g_longjmp(c); }
 
 // ---------------------------------------------------------------- strings
 GPtr<void> g_memcpy(GPtr<void> d, GPtr<const void> s, uint32_t n) { if (n) memcpy(d.h(), s.h(), n); return d; }
@@ -1289,7 +1355,7 @@ const hle::Def kDefs[] = {
     H("setlocale", g_setlocale), H("sysconf", g_sysconf), H("getauxval", g_getauxval),
     H("getrandom", g_getrandom), H("sysinfo", g_sysinfo), H("usleep", g_usleep), H("sleep", g_sleep), HE("sem_init", g_sem_init), HE("sem_destroy", g_sem_destroy), HE("sem_getvalue", g_sem_getvalue), HE("sem_post", g_sem_post), HE("sem_wait", g_sem_wait), HE("sem_timedwait", g_sem_timedwait), H("get_h_errno", g_get_h_errno), H("__get_h_errno", g_get_h_errno), HE("__mmap2", g_mmap2), HRAW("qsort", g_qsort), HRAW("bsearch", g_bsearch), HRAW("__android_log_print", g_android_log_print), HRAW("__android_log_assert", g_android_log_assert), H("__system_property_get", g_system_property_get), H("sched_yield", g_sched_yield),
     H("sigaction", g_sigaction), H("sigprocmask", g_sigprocmask), HRAW("abort", g_abort), H("exit", g_exit),
-    H("raise", g_raise), HRAW("__stack_chk_fail", g_stack_chk_fail), H("__assert2", g_assert2), HRAW("syscall", g_syscall),
+    H("raise", g_raise), HRAW("setjmp", g_setjmp), HRAW("_setjmp", [](cpu::Ctx& c) { g_sigsetjmp(c, false); }), HRAW("sigsetjmp", g_sigsetjmp_raw), HRAW("longjmp", g_longjmp), HRAW("_longjmp", g_longjmp), HRAW("siglongjmp", g_siglongjmp), HRAW("__stack_chk_fail", g_stack_chk_fail), H("__assert2", g_assert2), HRAW("syscall", g_syscall),
     H("dlopen", g_dlopen), H("dlsym", g_dlsym), H("dlclose", g_dlclose), H("dlerror", g_dlerror), H("dladdr", g_dladdr),
     H("__google_potentially_blocking_region_begin", g_google_potentially_blocking_region_begin),
     H("__google_potentially_blocking_region_end", g_google_potentially_blocking_region_end),

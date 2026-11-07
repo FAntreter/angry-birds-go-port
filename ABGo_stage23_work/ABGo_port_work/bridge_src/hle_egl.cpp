@@ -226,7 +226,12 @@ uint32_t g_eglQuerySurface(uint32_t d,uint32_t s,int32_t a,GPtr<EGLint> v) {
     if (!s || !token_belongs_to<EGLSurface>(s,d)) return EGL_FALSE;
     return eglQuerySurface(get<EGLDisplay>(d),get_owned<EGLSurface>(s,d),a,v.h());
 }
-uint32_t g_eglQueryString(uint32_t d,uint32_t n) { const char* s=eglQueryString(get<EGLDisplay>(d),n); return s ? arena::gstrdup(s) : 0; }
+uint32_t g_eglQueryString(uint32_t d,uint32_t n) {
+    const char* value = eglQueryString(get<EGLDisplay>(d), n);
+    bridge_log("EGL queryString display=0x%x name=0x%x value=%s error=0x%x",
+               d, n, value ? value : "(null)", eglGetError());
+    return value ? arena::gstrdup(value) : 0;
+}
 uint32_t g_eglGetCurrentContext() {
     EGLContext context = eglGetCurrentContext();
     EGLDisplay current = eglGetCurrentDisplay();
@@ -237,7 +242,16 @@ uint32_t g_eglGetCurrentSurface(uint32_t which) {
     EGLDisplay current = eglGetCurrentDisplay();
     return current != EGL_NO_DISPLAY ? put_owned(surface, put(current)) : put(surface);
 }
-uint32_t g_eglGetProcAddress(GStr name) { if(!name) return 0; return hle::resolve(name.h()); }
+uint32_t g_eglGetProcAddress(GStr name) {
+    if (!name) {
+        bridge_log("EGL getProcAddress name=(null) result=0");
+        return 0;
+    }
+    const char* symbol = name.h();
+    uint32_t address = hle::resolve(symbol);
+    bridge_log("EGL getProcAddress name=%s result=0x%x", symbol, address);
+    return address;
+}
 uint32_t g_eglGetError() { return eglGetError(); }
 uint32_t g_ANativeWindow_fromSurface(uint32_t, uint32_t surface) {
     ANativeWindow* w = ANativeWindow_fromSurface(jni::env(), jni::obj(surface));

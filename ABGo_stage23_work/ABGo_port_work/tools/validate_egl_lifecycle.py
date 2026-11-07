@@ -18,9 +18,11 @@ required = [
 missing = [x for x in required if x not in body]
 if missing:
     raise SystemExit('FAIL: missing EGL lifecycle handling: ' + ', '.join(missing))
-for item in ['put_owned(tmp[static_cast<size_t>(i)], d)', 'put_owned(eglCreateContext(', 'put_owned(eglCreateWindowSurface(', 'owner->second == display']:
+for item in ['put_owned(tmp[static_cast<size_t>(i)], d)', 'put_owned(eglCreateContext(', 'owner->second == display']:
     if item not in s:
         raise SystemExit('FAIL: missing display ownership assignment: ' + item)
+if 'EGLSurface surface = eglCreateWindowSurface(' not in s or 'put_owned(surface, d)' not in s:
+    raise SystemExit('FAIL: window surface is not tagged to its owning display')
 if 'table<EGLConfig>().clear()' in body or 'table<EGLContext>().clear()' in body or 'table<EGLSurface>().clear()' in body:
     raise SystemExit('FAIL: terminating one display still clears all EGL resources')
 print('PASS: EGLTerminate removes only resources tagged to the terminated display')

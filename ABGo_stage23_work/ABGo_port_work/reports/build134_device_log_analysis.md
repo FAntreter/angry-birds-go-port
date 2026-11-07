@@ -57,7 +57,7 @@ A direct decode of the original APK's `AngryBirdsGoActivity.onCreate(Bundle)` co
 
 1. It calls `isDeviceAmazon()`.
 2. If false (the actual verified return), it enters the Google Play Services branch:
-   - constructs `AngryBirdsGoGoogleBirdsGoGooglePlayServices`;
+   - constructs `AngryBirdsGoGooglePlayServices`;
    - calls `checkPlayServices()`;
    - if available, calls `Register()` and `InitialiseAPIClient()`;
    - if unavailable, records the unavailable state in preferences.

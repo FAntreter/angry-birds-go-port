@@ -49,3 +49,24 @@ Build #134's generic first-eight-call CPU probe was consumed by early C++ runtim
 ## Next diagnostic gate
 
 Prioritize observing the Android-side Activity and GL-view lifecycle (including Java exceptions) between the return from `isDeviceAmazon` and the first Exient surface callback. Do not change the native method's return value: its disassembly and observed return are correct. Do not claim rendering or gameplay until EGL surface creation and frame submission are observed and the game is tested on-device.
+
+
+## Follow-up DEX control-flow trace
+
+A direct decode of the original APK's `AngryBirdsGoActivity.onCreate(Bundle)` confirms the next Java-side path after the first native callback:
+
+1. It calls `isDeviceAmazon()`.
+2. If false (the actual verified return), it enters the Google Play Services branch:
+   - constructs `AngryBirdsGoGoogleBirdsGoGooglePlayServices`;
+   - calls `checkPlayServices()`;
+   - if available, calls `Register()` and `InitialiseAPIClient()`;
+   - if unavailable, records the unavailable state in preferences.
+3. Both paths then converge on the next native call, `isAdXTrackingOn()`.
+
+The uploaded bridge log has no `isAdXTrackingOn` entry. This makes the Google Play Services section (or an interruption/capture cutoff inside that section) the next concrete place to investigate. It is not yet proof that Google Play Services itself is the cause.
+
+## Diagnostic bypass experiment
+
+A separate test APK was prepared from build #134. In its private guest copy of `libABK_arm32.so`, only the first instruction of `isDeviceAmazon` was changed from `mov r0, #0` to `mov r0, #1`. The Activity's existing branch then skips the Google Play Services block and proceeds to `isAdXTrackingOn()`.
+
+This is strictly an isolation experiment, not a production fix: it temporarily selects the Amazon-device branch. The APK archive and JAR signature were verified after patching. No device result is claimed until this variant is launched and its new bridge log is examined.

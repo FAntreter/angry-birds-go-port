@@ -122,11 +122,21 @@ std::mutex g_str_mu;
 std::unordered_map<uint32_t, uint32_t> g_strings;
 uint32_t g_GetString(uint32_t name) {
     const auto* s = reinterpret_cast<const char*>(glGetString(name));
-    if (!s) return 0;
+    if (!s) {
+        bridge_log("GLES getString name=0x%x result=(null) error=0x%x", name, glGetError());
+        return 0;
+    }
+    // Keep the trace bounded: GL_EXTENSIONS can be a very long space-separated list.
+    bridge_log("GLES getString name=0x%x value=%.1200s", name, s);
     std::lock_guard l(g_str_mu);
     auto& slot = g_strings[name];
     if (!slot || strcmp(hp<const char>(slot), s) != 0) slot = arena::static_strdup(s);
     return slot;
+}
+uint32_t g_GetError() {
+    GLenum error = glGetError();
+    if (error != GL_NO_ERROR) bridge_log("GLES getError=0x%x", error);
+    return error;
 }
 int32_t g_GetUniformLocation(uint32_t p, GStr n) { return glGetUniformLocation(p, n.h()); }
 void g_GetUniformfv(uint32_t p, int32_t loc, GPtr<float> out) { glGetUniformfv(p, loc, out.h()); }
@@ -190,7 +200,7 @@ const hle::Def kDefs[] = {
     H("glFrontFace", g_FrontFace), H("glGenBuffers", g_GenBuffers), H("glGenFramebuffers", g_GenFramebuffers),
     H("glGenRenderbuffers", g_GenRenderbuffers), H("glGenTextures", g_GenTextures),
     H("glGetActiveUniform", g_GetActiveUniform), H("glGetAttribLocation", g_GetAttribLocation),
-    H("glGetIntegerv", g_GetIntegerv), H("glGetProgramInfoLog", g_GetProgramInfoLog),
+    H("glGetIntegerv", g_GetIntegerv), H("glGetError", g_GetError), H("glGetProgramInfoLog", g_GetProgramInfoLog),
     H("glGetProgramiv", g_GetProgramiv), H("glGetShaderInfoLog", g_GetShaderInfoLog),
     H("glGetShaderiv", g_GetShaderiv), H("glGetString", g_GetString),
     H("glGetUniformLocation", g_GetUniformLocation), H("glGetUniformfv", g_GetUniformfv),

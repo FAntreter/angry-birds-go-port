@@ -18,9 +18,16 @@ required = [
 missing = [x for x in required if x not in body]
 if missing:
     raise SystemExit('FAIL: missing EGL lifecycle handling: ' + ', '.join(missing))
-for item in ['put_owned(tmp[static_cast<size_t>(i)], d)', 'put_owned(eglCreateContext(', 'owner->second == display']:
+for item in ['put_owned(tmp[static_cast<size_t>(i)], d)', 'owner->second == display']:
     if item not in s:
         raise SystemExit('FAIL: missing display ownership assignment: ' + item)
+# Accept either the original inline EGL context creation or an equivalent
+# two-step form that logs the native result before assigning its display token.
+inline_context = 'put_owned(eglCreateContext(' in s
+logged_context = ('EGLContext context = eglCreateContext(' in s and
+                  'put_owned(context, d)' in s)
+if not (inline_context or logged_context):
+    raise SystemExit('FAIL: EGL context is not tagged to its owning display')
 if 'EGLSurface surface = eglCreateWindowSurface(' not in s or 'put_owned(surface, d)' not in s:
     raise SystemExit('FAIL: window surface is not tagged to its owning display')
 if 'table<EGLConfig>().clear()' in body or 'table<EGLContext>().clear()' in body or 'table<EGLSurface>().clear()' in body:

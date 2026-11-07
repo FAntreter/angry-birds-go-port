@@ -1,5 +1,6 @@
 // GLES 2.0 imports. Pointer arguments address guest memory, which the host GL reads in place.
 #include <GLES2/gl2.h>
+#include <EGL/egl.h>
 
 #include <mutex>
 #include <unordered_map>
@@ -117,6 +118,64 @@ void g_GetProgramInfoLog(uint32_t p, int32_t n, GPtr<int32_t> len, GPtr<char> lo
 void g_GetProgramiv(uint32_t p, uint32_t pname, GPtr<int32_t> out) { glGetProgramiv(p, pname, out.h()); }
 void g_GetShaderInfoLog(uint32_t s, int32_t n, GPtr<int32_t> len, GPtr<char> log) { glGetShaderInfoLog(s, n, len.h(), log.h()); }
 void g_GetShaderiv(uint32_t s, uint32_t pname, GPtr<int32_t> out) { glGetShaderiv(s, pname, out.h()); }
+
+
+template <typename Fn>
+Fn host_gl_proc(const char* name) {
+    auto proc = eglGetProcAddress(name);
+    return reinterpret_cast<Fn>(proc);
+}
+
+// These wrappers keep all guest-visible function addresses inside the ARM32
+// HLE thunk table. Never return a native 64-bit driver pointer to the guest.
+void g_GenVertexArraysOES(int32_t n, GPtr<uint32_t> arrays) {
+    using Fn = void (*)(GLsizei, GLuint*);
+    static Fn fn = host_gl_proc<Fn>("glGenVertexArraysOES");
+    if (!fn) fn = host_gl_proc<Fn>("glGenVertexArrays");
+    if (fn) fn(n, arrays.h());
+    else bridge_log("GLES missing host proc glGenVertexArraysOES");
+}
+void g_DeleteVertexArraysOES(int32_t n, GPtr<const uint32_t> arrays) {
+    using Fn = void (*)(GLsizei, const GLuint*);
+    static Fn fn = host_gl_proc<Fn>("glDeleteVertexArraysOES");
+    if (!fn) fn = host_gl_proc<Fn>("glDeleteVertexArrays");
+    if (fn) fn(n, arrays.h());
+    else bridge_log("GLES missing host proc glDeleteVertexArraysOES");
+}
+void g_BindVertexArrayOES(uint32_t array) {
+    using Fn = void (*)(GLuint);
+    static Fn fn = host_gl_proc<Fn>("glBindVertexArrayOES");
+    if (!fn) fn = host_gl_proc<Fn>("glBindVertexArray");
+    if (fn) fn(array);
+    else bridge_log("GLES missing host proc glBindVertexArrayOES");
+}
+uint32_t g_IsVertexArrayOES(uint32_t array) {
+    using Fn = GLboolean (*)(GLuint);
+    static Fn fn = host_gl_proc<Fn>("glIsVertexArrayOES");
+    if (!fn) fn = host_gl_proc<Fn>("glIsVertexArray");
+    if (!fn) {
+        bridge_log("GLES missing host proc glIsVertexArrayOES");
+        return GL_FALSE;
+    }
+    return fn(array);
+}
+void g_TexStorage2DCompat(uint32_t target, int32_t levels, uint32_t format, int32_t width, int32_t height) {
+    using Fn = void (*)(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
+    static Fn fn = host_gl_proc<Fn>("glTexStorage2D");
+    if (fn) fn(target, levels, format, width, height);
+    else bridge_log("GLES missing host proc glTexStorage2D");
+}
+void g_DiscardFramebufferEXT(uint32_t target, int32_t count, GPtr<const uint32_t> attachments) {
+    using Fn = void (*)(GLenum, GLsizei, const GLenum*);
+    static Fn fn = host_gl_proc<Fn>("glDiscardFramebufferEXT");
+    if (!fn) fn = host_gl_proc<Fn>("glInvalidateFramebuffer");
+    if (fn) fn(target, count, attachments.h());
+    else bridge_log("GLES missing host proc glDiscardFramebufferEXT");
+}
+// Debug marker calls do not affect rendering; provide safe no-op thunks.
+void g_InsertEventMarkerEXT(int32_t, GStr) {}
+void g_PushGroupMarkerEXT(int32_t, GStr) {}
+void g_PopGroupMarkerEXT() {}
 
 std::mutex g_str_mu;
 std::unordered_map<uint32_t, uint32_t> g_strings;

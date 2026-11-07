@@ -40,6 +40,9 @@ jobs:
       - name: Generate current ARM32 import-resolution audit
         run: python3 tools/audit_guest_import_resolution.py
 
+      - name: Scan startup update and network strings
+        run: python3 tools/scan_update_strings.py
+
       - name: Build Android ARM64 bridge
         run: bash scripts/build_android.sh
 
@@ -51,6 +54,13 @@ jobs:
         with:
           name: AngryBirdsGoBridge-arm64-v8a
           path: ABGo_stage23_work/ABGo_port_work/build-android-arm64/*.so
+          if-no-files-found: error
+
+      - name: Upload update/network string inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: AngryBirdsGo-update-network-inventory
+          path: ABGo_stage23_work/ABGo_port_work/reports/update_network_string_inventory.md
           if-no-files-found: error
 
       - name: Upload current import audit report

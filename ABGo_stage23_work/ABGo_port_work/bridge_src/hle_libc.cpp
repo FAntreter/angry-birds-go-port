@@ -125,7 +125,9 @@ void guest_restore_signal_mask(uint64_t mask) {
 
 uint32_t guest_jmp_checksum(const uint32_t* words) {
     uint32_t checksum = 0;
-    for (size_t i = 0; i < kGuestJmpChecksum; ++i) checksum ^= words[i];
+    // Bionic's ARM32 checksum covers words 0 through 28; LR and SP are stored
+    // after the checksum inputs and are intentionally excluded.
+    for (size_t i = 0; i < 29; ++i) checksum ^= words[i];
     return checksum;
 }
 

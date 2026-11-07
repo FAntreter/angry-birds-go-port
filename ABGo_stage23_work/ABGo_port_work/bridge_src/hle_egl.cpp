@@ -124,12 +124,12 @@ template<class T> void drop(uint32_t id) {
 }
 uint32_t g_eglGetDisplay(uint32_t native) {
     uint32_t token = put(eglGetDisplay(reinterpret_cast<EGLNativeDisplayType>(static_cast<uintptr_t>(native))));
-    LOGI("EGL getDisplay native=0x%x token=0x%x error=0x%x", native, token, eglGetError());
+    bridge_log("EGL getDisplay native=0x%x token=0x%x error=0x%x", native, token, eglGetError());
     return token;
 }
 uint32_t g_eglInitialize(uint32_t d, GPtr<EGLint> major, GPtr<EGLint> minor) {
     EGLBoolean ok = eglInitialize(get<EGLDisplay>(d), major.h(), minor.h());
-    LOGI("EGL initialize display=0x%x ok=%u version=%d.%d error=0x%x", d, ok, major ? *major.h() : -1, minor ? *minor.h() : -1, eglGetError());
+    bridge_log("EGL initialize display=0x%x ok=%u version=%d.%d error=0x%x", d, ok, major ? *major.h() : -1, minor ? *minor.h() : -1, eglGetError());
     return ok;
 }
 uint32_t g_eglTerminate(uint32_t d) {
@@ -184,7 +184,7 @@ uint32_t g_eglCreateWindowSurface(uint32_t d,uint32_t c,uint32_t w,GPtr<const EG
     EGLint width = 0, height = 0;
     if (surface != EGL_NO_SURFACE) { eglQuerySurface(get<EGLDisplay>(d), surface, EGL_WIDTH, &width); eglQuerySurface(get<EGLDisplay>(d), surface, EGL_HEIGHT, &height); }
     uint32_t token = put_owned(surface, d);
-    LOGI("EGL createWindowSurface display=0x%x config=0x%x window=0x%x token=0x%x size=%dx%d error=0x%x", d, c, w, token, width, height, eglGetError());
+    bridge_log("EGL createWindowSurface display=0x%x config=0x%x window=0x%x token=0x%x size=%dx%d error=0x%x", d, c, w, token, width, height, eglGetError());
     return token;
 }
 uint32_t g_eglDestroySurface(uint32_t d,uint32_t s) {
@@ -194,14 +194,14 @@ uint32_t g_eglDestroySurface(uint32_t d,uint32_t s) {
 uint32_t g_eglMakeCurrent(uint32_t d,uint32_t draw,uint32_t read,uint32_t ctx) {
     if (!token_belongs_to<EGLSurface>(draw,d) || !token_belongs_to<EGLSurface>(read,d) || !token_belongs_to<EGLContext>(ctx,d)) return EGL_FALSE;
     EGLBoolean ok = eglMakeCurrent(get<EGLDisplay>(d), get_owned<EGLSurface>(draw,d), get_owned<EGLSurface>(read,d), get_owned<EGLContext>(ctx,d));
-    LOGI("EGL makeCurrent display=0x%x draw=0x%x read=0x%x context=0x%x ok=%u error=0x%x", d, draw, read, ctx, ok, eglGetError());
+    bridge_log("EGL makeCurrent display=0x%x draw=0x%x read=0x%x context=0x%x ok=%u error=0x%x", d, draw, read, ctx, ok, eglGetError());
     return ok;
 }
 uint32_t g_eglSwapBuffers(uint32_t d,uint32_t s) {
     if (!s || !token_belongs_to<EGLSurface>(s,d)) return EGL_FALSE;
     EGLBoolean ok = eglSwapBuffers(get<EGLDisplay>(d), get_owned<EGLSurface>(s,d));
     uint32_t n = g_swap_trace_count.fetch_add(1, std::memory_order_relaxed);
-    if (n < 8 || !ok) LOGI("EGL swapBuffers #%u display=0x%x surface=0x%x ok=%u error=0x%x", n + 1, d, s, ok, eglGetError());
+    if (n < 8 || !ok) bridge_log("EGL swapBuffers #%u display=0x%x surface=0x%x ok=%u error=0x%x", n + 1, d, s, ok, eglGetError());
     return ok;
 }
 uint32_t g_eglSwapInterval(uint32_t d,int32_t i) { return eglSwapInterval(get<EGLDisplay>(d),i); }

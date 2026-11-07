@@ -595,7 +595,9 @@ R native_tramp(JNIEnv* env, jobject self, A... a) {
     }
     uint32_t fn = g_native_addr[Slot].load(std::memory_order_acquire);
     if (!fn) fatal("native %s.%s is not bound", kNatives[Slot].cls, kNatives[Slot].name);
+    bridge_log("JNI guest enter %s.%s fn=0x%08x argc=%zu", kNatives[Slot].cls, kNatives[Slot].name, fn, args.words.size() - 2);
     uint64_t r = cpu::call(fn, args.words);
+    bridge_log("JNI guest return %s.%s result=0x%016llx", kNatives[Slot].cls, kNatives[Slot].name, static_cast<unsigned long long>(r));
     if constexpr (std::is_void_v<R>) {
         return;
     } else if constexpr (std::is_pointer_v<R>) {

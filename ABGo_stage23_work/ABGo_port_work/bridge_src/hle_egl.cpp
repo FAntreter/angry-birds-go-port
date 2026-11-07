@@ -148,13 +148,19 @@ uint32_t g_eglTerminate(uint32_t d) {
     }
     return result;
 }
-uint32_t g_eglBindAPI(uint32_t api) { return eglBindAPI(api); }
+uint32_t g_eglBindAPI(uint32_t api) {
+    EGLBoolean ok = eglBindAPI(api);
+    bridge_log("EGL bindAPI api=0x%x ok=%u error=0x%x", api, ok, eglGetError());
+    return ok;
+}
 uint32_t g_eglChooseConfig(uint32_t d, GPtr<const EGLint> attrs, GPtr<uint32_t> configs, int32_t size, GPtr<EGLint> count) {
     if (size < 0 || size > 4096) return EGL_FALSE;
     std::vector<EGLConfig> tmp(static_cast<size_t>(size)); EGLint n = 0;
     EGLBoolean ok = eglChooseConfig(get<EGLDisplay>(d), attrs.h(), tmp.data(), size, &n);
     if (count) *count.h() = n;
     if (configs && ok) for (int i=0; i<n && i<size; ++i) { uint32_t token = put_owned(tmp[static_cast<size_t>(i)], d); configs.h()[i] = token; }
+    bridge_log("EGL chooseConfig display=0x%x size=%d count=%d ok=%u first=0x%x error=0x%x",
+               d, size, n, ok, configs && n > 0 ? configs.h()[0] : 0, eglGetError());
     return ok;
 }
 uint32_t g_eglGetConfigs(uint32_t d, GPtr<uint32_t> configs, int32_t size, GPtr<EGLint> count) {
@@ -170,8 +176,15 @@ uint32_t g_eglGetConfigAttrib(uint32_t d,uint32_t c,uint32_t a,GPtr<EGLint> v) {
     return eglGetConfigAttrib(get<EGLDisplay>(d),get_owned<EGLConfig>(c,d),a,v.h());
 }
 uint32_t g_eglCreateContext(uint32_t d,uint32_t c,uint32_t share,GPtr<const EGLint> attrs) {
-    if (!c || !token_belongs_to<EGLConfig>(c,d) || !token_belongs_to<EGLContext>(share,d)) return 0;
-    return put_owned(eglCreateContext(get<EGLDisplay>(d),get_owned<EGLConfig>(c,d),get_owned<EGLContext>(share,d),attrs.h()), d);
+    if (!c || !token_belongs_to<EGLConfig>(c,d) || !token_belongs_to<EGLContext>(share,d)) {
+        bridge_log("EGL createContext rejected display=0x%x config=0x%x share=0x%x", d, c, share);
+        return 0;
+    }
+    EGLContext context = eglCreateContext(get<EGLDisplay>(d),get_owned<EGLConfig>(c,d),get_owned<EGLContext>(share,d),attrs.h());
+    uint32_t token = put_owned(context, d);
+    bridge_log("EGL createContext display=0x%x config=0x%x share=0x%x token=0x%x error=0x%x",
+               d, c, share, token, eglGetError());
+    return token;
 }
 uint32_t g_eglDestroyContext(uint32_t d,uint32_t c) {
     if (!c || !token_belongs_to<EGLContext>(c,d)) return EGL_FALSE;

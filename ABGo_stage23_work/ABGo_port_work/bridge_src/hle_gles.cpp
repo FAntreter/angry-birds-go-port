@@ -270,6 +270,18 @@ const hle::Def kDefs[] = {
     H("glUniform4f", g_Uniform4f), H("glUniformMatrix4fv", g_UniformMatrix4fv), H("glUseProgram", g_UseProgram),
     H("glValidateProgram", g_ValidateProgram), H("glVertexAttribPointer", g_VertexAttribPointer),
     H("glViewport", g_Viewport),
+    // Extension entry points are resolved through the guest HLE table, not
+    // returned as raw host eglGetProcAddress pointers.
+    H("glGenVertexArraysOES", g_GenVertexArraysOES),
+    H("glDeleteVertexArraysOES", g_DeleteVertexArraysOES),
+    H("glBindVertexArrayOES", g_BindVertexArrayOES),
+    H("glIsVertexArrayOES", g_IsVertexArrayOES),
+    H("glTexStorage2DARB", g_TexStorage2DCompat),
+    H("glTexStorage2DEXT", g_TexStorage2DCompat),
+    H("glDiscardFramebufferEXT", g_DiscardFramebufferEXT),
+    H("glInsertEventMarkerEXT", g_InsertEventMarkerEXT),
+    H("glPushGroupMarkerEXT", g_PushGroupMarkerEXT),
+    H("glPopGroupMarkerEXT", g_PopGroupMarkerEXT),
 };
 
 }  // namespace

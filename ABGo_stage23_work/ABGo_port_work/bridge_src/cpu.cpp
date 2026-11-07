@@ -464,7 +464,26 @@ uint64_t call(uint32_t fn, const std::vector<uint32_t>& words) {
         bridge_log("CRYPTO STEP END: steps=%u returned=%d pc=0x%08x",
                    steps, c.returned ? 1 : 0, R[15]);
     } else {
-        c.jit->Run();
+        // Probe the first few guest calls one instruction at a time. This
+        // distinguishes a Dynarmic JIT/run-loop stall from a bad guest entry
+        // or return trampoline without changing the guest register state.
+        static std::atomic<uint32_t> first_call_probe{0};
+        const uint32_t probe_id = first_call_probe.fetch_add(1, std::memory_order_relaxed);
+        if (probe_id < 8) {
+            bridge_log("JNI CPU PROBE BEGIN: call=%u fn=0x%08x pc=0x%08x lr=0x%08x cpsr=0x%08x",
+                       probe_id + 1, fn, R[15], R[14], c.jit->Cpsr());
+            for (uint32_t step = 0; step < 4 && !c.returned; ++step) {
+                const uint32_t pc_before = R[15];
+                const uint32_t cpsr_before = c.jit->Cpsr();
+                c.jit->Step();
+                bridge_log("JNI CPU PROBE STEP: call=%u step=%u pc=0x%08x next=0x%08x lr=0x%08x r0=0x%08x cpsr=0x%08x returned=%d",
+                           probe_id + 1, step + 1, pc_before, R[15], R[14], R[0],
+                           c.jit->Cpsr(), c.returned ? 1 : 0);
+            }
+            bridge_log("JNI CPU PROBE END: call=%u pc=0x%08x returned=%d",
+                       probe_id + 1, R[15], c.returned ? 1 : 0);
+        }
+        if (!c.returned) c.jit->Run();
     }
     --t.depth;
     if (!c.returned) dump_and_die(c.jit.get(), "guest call halted without returning");

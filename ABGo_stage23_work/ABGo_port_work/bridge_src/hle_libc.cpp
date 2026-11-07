@@ -644,7 +644,7 @@ int32_t g_open(GStr path, int32_t flags, int32_t mode) {
     return fd;
 }
 int32_t g_close(int32_t fd) { return close(fd); }
-int32_t g_read(int32_t fd, GPtr<void> b, uint32_t n) {
+int32_t g_read(cpu::Ctx* c, int32_t fd, GPtr<void> b, uint32_t n) {
     char fd_path[64] = {};
     char target[PATH_MAX] = {};
     snprintf(fd_path, sizeof(fd_path), "/proc/self/fd/%d", fd);
@@ -653,10 +653,12 @@ int32_t g_read(int32_t fd, GPtr<void> b, uint32_t n) {
     else snprintf(target, sizeof(target), "(readlink errno=%d)", errno);
     struct stat st = {};
     int stat_result = fstat(fd, &st);
-    bridge_log("IO: read begin fd=%d target=%s size=%u mode=0%o stat=%d", fd, target, n,
+    const uint32_t caller = c ? c->r(14) : 0;
+    bridge_log("IO: read begin caller=0x%08x from=%s fd=%d target=%s size=%u mode=0%o stat=%d",
+               caller, elf::describe(caller).c_str(), fd, target, n,
                stat_result == 0 ? st.st_mode : 0, stat_result);
     int32_t result = static_cast<int32_t>(read(fd, b.h(), n));
-    bridge_log("IO: read end fd=%d target=%s result=%d errno=%d", fd, target, result,
+    bridge_log("IO: read end caller=0x%08x fd=%d target=%s result=%d errno=%d", caller, fd, target, result,
                result < 0 ? errno : 0);
     return result;
 }
@@ -726,7 +728,14 @@ int32_t g_gettid() {
     return -1;
 #endif
 }
-int32_t g_pipe(GPtr<int32_t> fds) { return pipe(reinterpret_cast<int*>(fds.h())); }
+int32_t g_pipe(cpu::Ctx* c, GPtr<int32_t> fds) {
+    const uint32_t caller = c ? c->r(14) : 0;
+    int32_t result = pipe(reinterpret_cast<int*>(fds.h()));
+    bridge_log("IO: pipe caller=0x%08x from=%s result=%d fds=%d,%d",
+               caller, elf::describe(caller).c_str(), result,
+               result == 0 ? fds.h()[0] : -1, result == 0 ? fds.h()[1] : -1);
+    return result;
+}
 int32_t g_poll(GPtr<struct pollfd> fds, uint32_t n, int32_t timeout) { return poll(fds.h(), n, timeout); }
 int32_t g_writev(int32_t fd, GPtr<const uint32_t> iov, int32_t cnt) {
     std::vector<struct iovec> v(static_cast<size_t>(cnt > 0 ? cnt : 0));

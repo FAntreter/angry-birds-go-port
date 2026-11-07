@@ -580,7 +580,7 @@ R native_tramp(JNIEnv* env, jobject self, A... a) {
     Scope scope(env);
     const uint32_t trace_id = g_native_trace_count.fetch_add(1, std::memory_order_relaxed);
     if (trace_id < 160) {
-        LOGI("JNI guest call #%u %s.%s", trace_id + 1, kNatives[Slot].cls, kNatives[Slot].name);
+        bridge_log("JNI guest call #%u %s.%s", trace_id + 1, kNatives[Slot].cls, kNatives[Slot].name);
     }
     if (Slot == g_slot_config.load(std::memory_order_relaxed)) display::on_native_config(env, self);
     cpu::Args args;

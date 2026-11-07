@@ -409,7 +409,48 @@ uint64_t call(uint32_t fn, const std::vector<uint32_t>& words) {
     const bool enters_rng_directly = watched_rng != 0 && call_pc >= watched_rng &&
                                      call_pc < watched_rng + 0x4000u;
     const bool enters_startup_constructor = startup_entry != 0 && call_pc == startup_entry;
-    if (g_crypto_watch_active.load(std::memory_order_relaxed) &&
+    // The Exient GL draw JNI callback enters the app tick loop. The generic
+    // first-call probe is consumed by constructors long before this callback,
+    // so trace this exact entry independently and only once. Runtime guest
+    // address is stable for the currently loaded libABK image.
+    static std::atomic<bool> draw_frame_trace_used{false};
+    const bool trace_draw_frame = fn == 0x01bdb340u &&
+        !draw_frame_trace_used.exchange(true, std::memory_order_acq_rel);
+    if (trace_draw_frame) {
+        bridge_log("DRAW FRAME STEP BEGIN: fn=0x%08x pc=0x%08x lr=0x%08x cpsr=0x%08x budget=4096",
+                   fn, R[15], R[14], c.jit->Cpsr());
+        uint32_t steps = 0;
+        while (!c.returned && steps < 4096u) {
+            const uint32_t before_pc = R[15];
+            const uint32_t before_cpsr = c.jit->Cpsr();
+            const bool thumb = (before_cpsr & 0x20u) != 0;
+            uint32_t instruction = 0;
+            if (thumb) {
+                uint16_t halfword = 0;
+                memcpy(&halfword, arena::base + (before_pc & ~1u), sizeof halfword);
+                instruction = halfword;
+            } else {
+                memcpy(&instruction, arena::base + (before_pc & ~3u), sizeof instruction);
+            }
+            c.jit->Step();
+            ++steps;
+            if (steps <= 24u || (steps % 64u) == 0u || c.returned) {
+                bridge_log("DRAW FRAME STEP: n=%u pc=0x%08x insn=0x%08x next=0x%08x cpsr=0x%08x r0=%08x r1=%08x r2=%08x r3=%08x",
+                           steps, before_pc, instruction, R[15], c.jit->Cpsr(),
+                           R[0], R[1], R[2], R[3]);
+            }
+        }
+        bridge_log("DRAW FRAME STEP FINAL: steps=%u returned=%d pc=0x%08x cpsr=0x%08x r0=%08x r1=%08x r2=%08x r3=%08x",
+                   steps, c.returned ? 1 : 0, R[15], c.jit->Cpsr(),
+                   R[0], R[1], R[2], R[3]);
+        if (!c.returned && steps == 4096u) {
+            bridge_log("DRAW FRAME STEP LIMIT: resuming normal Dynarmic execution at pc=0x%08x",
+                       R[15]);
+            c.jit->Run();
+        }
+        bridge_log("DRAW FRAME STEP END: returned=%d pc=0x%08x",
+                   c.returned ? 1 : 0, R[15]);
+    } else if (g_crypto_watch_active.load(std::memory_order_relaxed) &&
         (enters_rng_directly || enters_startup_constructor)) {
         // Step the outer NSS/FIPS constructor as well as direct RNG calls.
         // The constructor can branch into RNG code without a new host call.

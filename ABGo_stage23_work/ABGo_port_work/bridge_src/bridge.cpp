@@ -140,37 +140,43 @@ extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*) {
     // The Go SDK's JNI_OnLoad stores the JavaVM and returns JNI_VERSION_1_6.
     if (auto it = loaded.find("libSkynestSDK.so"); it != loaded.end()) {
         auto on_load = it->second->exports.find("JNI_OnLoad");
-        if (on_load == it->second->exports.end())
-            fatal("libSkynestSDK.so is missing JNI_OnLoad");
-        jint sdk_version;
-        {
-            jni::Scope scope(env);
-            sdk_version = static_cast<jint>(cpu::call(on_load->second, {jni::guest_vm(), 0}));
+        if (on_load != it->second->exports.end()) {
+            jint sdk_version;
+            {
+                jni::Scope scope(env);
+                sdk_version = static_cast<jint>(cpu::call(on_load->second, {jni::guest_vm(), 0}));
+            }
+            LOGI("libSkynestSDK.so JNI_OnLoad returned 0x%x", sdk_version);
+            if (sdk_version != JNI_VERSION_1_6)
+                fatal("libSkynestSDK.so requested unsupported JNI version 0x%x", sdk_version);
+        } else {
+            LOGI("libSkynestSDK.so has no JNI_OnLoad; skipping");
         }
-        LOGI("libSkynestSDK.so JNI_OnLoad returned 0x%x", sdk_version);
-        if (sdk_version != JNI_VERSION_1_6)
-            fatal("libSkynestSDK.so requested unsupported JNI version 0x%x", sdk_version);
     } else {
-        fatal("libSkynestSDK.so was not loaded as a guest dependency");
+        LOGI("libSkynestSDK.so not loaded as a guest dependency; skipping");
     }
 
     // AdColony's Java code loads "js" and "adcolony" separately after the
-    // Activity starts. Its ARM64 load stubs only satisfy Android's linker;
-    // preload the real ARM32 guest pair now so its JNI exports and
-    // RegisterNatives hook are available to the guest JNI environment.
-    elf::Module* adcolony = load_guest_tree("libadcolony.so", "libadcolony_arm32.so",
-                                            loaded, active);
-    if (auto on_load = adcolony->exports.find("JNI_OnLoad"); on_load != adcolony->exports.end()) {
-        jint sdk_version;
-        {
-            jni::Scope scope(env);
-            sdk_version = static_cast<jint>(cpu::call(on_load->second, {jni::guest_vm(), 0}));
+    // Activity starts. Preload the real ARM32 guest pair when it is packaged so
+    // its JNI exports and RegisterNatives hook are available; skip if absent.
+    if (FILE* f = fopen((own_dir() + "/libadcolony_arm32.so").c_str(), "rb")) {
+        fclose(f);
+        elf::Module* adcolony = load_guest_tree("libadcolony.so", "libadcolony_arm32.so",
+                                                loaded, active);
+        if (auto on_load = adcolony->exports.find("JNI_OnLoad"); on_load != adcolony->exports.end()) {
+            jint sdk_version;
+            {
+                jni::Scope scope(env);
+                sdk_version = static_cast<jint>(cpu::call(on_load->second, {jni::guest_vm(), 0}));
+            }
+            LOGI("libadcolony.so JNI_OnLoad returned 0x%x", sdk_version);
+            if (sdk_version != JNI_VERSION_1_6)
+                fatal("libadcolony.so requested unsupported JNI version 0x%x", sdk_version);
+        } else {
+            LOGI("libadcolony.so has no JNI_OnLoad; skipping");
         }
-        LOGI("libadcolony.so JNI_OnLoad returned 0x%x", sdk_version);
-        if (sdk_version != JNI_VERSION_1_6)
-            fatal("libadcolony.so requested unsupported JNI version 0x%x", sdk_version);
     } else {
-        fatal("libadcolony.so is missing JNI_OnLoad");
+        LOGI("libadcolony_arm32.so not packaged; skipping AdColony preload");
     }
 
     bridge_log("AdColony guest library initialized; binding game JNI exports");

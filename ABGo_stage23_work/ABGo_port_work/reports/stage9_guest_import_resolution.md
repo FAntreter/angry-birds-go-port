@@ -6,35 +6,98 @@ Generated from `readelf --dyn-syms` for bundled ARM32 libraries and HLE registra
 
 ## Summary
 
-- Undefined symbol names inspected: **1183** (counted per library/import occurrence).
-- HLE-name matches: **481**.
-- Names exported by another bundled guest ELF: **368**.
-- Names with no matching guest export/HLE name: **334**.
+- Undefined symbol names inspected: **1067** (counted per library/import occurrence).
+- HLE-name matches: **795**.
+- Names exported by another bundled guest ELF: **210**.
+- Names with no matching guest export/HLE name: **62**.
+- Unmatched names with dynamic relocations: **62**.
+- Unmatched names without dynamic relocations: **0**.
 
 ## Unmatched imports by library
 
-### `libABK.so` — 163 unmatched names
-`SL_IID_ANDROIDSIMPLEBUFFERQUEUE`, `SL_IID_ENGINE`, `SL_IID_ENGINECAPABILITIES`, `SL_IID_PLAY`, `SL_IID_PLAYBACKRATE`, `SL_IID_SEEK`, `SL_IID_VOLUME`, `__aeabi_memset`, `__android_log_assert`, `__get_h_errno`, `__isinf`, `__mmap2`, `__page_size`, `__sF`, `_ctype_`, `_exit`, `_tolower_tab_`, `_toupper_tab_`, `abort`, `accept`, `access`, `acosf`, `asinf`, `atanf`, `bind`, `bsd_signal`, `bsearch`, `chdir`, `chmod`, `clock_gettime`, `close`, `closedir`, `connect`, `dup2`, `environ`, `execv`, `execve`, `execvp`, `expf`, `fabsf`, `fchmod`, `fchown`, `fclose`, `fcntl`, `fdopen`, `fflush`, `fgetc`, `fgets`, `flock`, `fopen`, `fork`, `fprintf`, `fputc`, `fputs`, `fread`, `freeaddrinfo`, `freopen`, `fseek`, `fstat`, `fsync`, `ftell`, `ftruncate`, `fwrite`, `getaddrinfo`, `getc`, `getcwd`, `getegid`, `getgid`, `gethostbyaddr`, `gethostbyname`, `gethostbyname2`, `gethostname`, `getnameinfo`, `getpeername`, `getprotobyname`, `getprotobynumber`, `getrlimit`, `getsockname`, `getsockopt`, `gettimeofday`, `getuid`, `ioctl`, `kill`, `listen`, `logf`, `longjmp`, `lrint`, `lseek`, `lseek64`, `memalign`, `memccpy`, `mkdir`, `mktemp`, `mmap`, `mremap`, `msync`, `nanosleep`, `open`, `opendir`, `pipe`, `poll`, `printf`, `pthread_attr_destroy`, `pthread_attr_init`, `pthread_attr_setdetachstate`, `pthread_attr_setstacksize`, `pthread_exit`, `pthread_kill`, `pthread_once`, `putchar`, `putenv`, `puts`, `qsort`, `read`, `readdir`, `readlink`, `recv`, `recvfrom`, `remove`, `rename`, `rmdir`, `select`, `sem_destroy`, `sem_getvalue`, `sem_init`, `sem_post`, `sem_timedwait`, `sem_wait`, `send`, `sendfile`, `sendto`, `setjmp`, `setrlimit`, `setsockopt`, `shutdown`, `sigwait`, `sleep`, `snprintf`, `socket`, `socketpair`, `sprintf`, `sscanf`, `stat`, `strnlen`, `strtod`, `strtok`, `strtol`, `strtoll`, `strtoul`, `syscall`, `sysinfo`, `syslog`, `uname`, `ungetc`, `unlink`, `usleep`, `utimes`, `vfprintf`, `vsnprintf`, `vsprintf`, `waitpid`, `write`, `writev`
+### `libABK.so` — 62 unmatched names
+- `AConfiguration_delete` — R_ARM_JUMP_SLOT
+- `AConfiguration_fromAssetManager` — R_ARM_JUMP_SLOT
+- `AConfiguration_getCountry` — R_ARM_JUMP_SLOT
+- `AConfiguration_getLanguage` — R_ARM_JUMP_SLOT
+- `AConfiguration_new` — R_ARM_JUMP_SLOT
+- `AInputEvent_getDeviceId` — R_ARM_JUMP_SLOT
+- `AInputEvent_getSource` — R_ARM_JUMP_SLOT
+- `AInputEvent_getType` — R_ARM_JUMP_SLOT
+- `AInputQueue_attachLooper` — R_ARM_JUMP_SLOT
+- `AInputQueue_detachLooper` — R_ARM_JUMP_SLOT
+- `AInputQueue_finishEvent` — R_ARM_JUMP_SLOT
+- `AInputQueue_getEvent` — R_ARM_JUMP_SLOT
+- `AInputQueue_preDispatchEvent` — R_ARM_JUMP_SLOT
+- `AKeyEvent_getAction` — R_ARM_JUMP_SLOT
+- `AKeyEvent_getKeyCode` — R_ARM_JUMP_SLOT
+- `ALooper_addFd` — R_ARM_JUMP_SLOT
+- `ALooper_forThread` — R_ARM_JUMP_SLOT
+- `ALooper_pollAll` — R_ARM_JUMP_SLOT
+- `ALooper_prepare` — R_ARM_JUMP_SLOT
+- `AMotionEvent_getAction` — R_ARM_JUMP_SLOT
+- `AMotionEvent_getDownTime` — R_ARM_JUMP_SLOT
+- `AMotionEvent_getEdgeFlags` — R_ARM_JUMP_SLOT
+- `AMotionEvent_getEventTime` — R_ARM_JUMP_SLOT
+- `AMotionEvent_getFlags` — R_ARM_JUMP_SLOT
+- `AMotionEvent_getMetaState` — R_ARM_JUMP_SLOT
+- `AMotionEvent_getOrientation` — R_ARM_JUMP_SLOT
+- `AMotionEvent_getPointerCount` — R_ARM_JUMP_SLOT
+- `AMotionEvent_getPointerId` — R_ARM_JUMP_SLOT
+- `AMotionEvent_getPressure` — R_ARM_JUMP_SLOT
+- `AMotionEvent_getSize` — R_ARM_JUMP_SLOT
+- `AMotionEvent_getToolMajor` — R_ARM_JUMP_SLOT
+- `AMotionEvent_getToolMinor` — R_ARM_JUMP_SLOT
+- `AMotionEvent_getTouchMajor` — R_ARM_JUMP_SLOT
+- `AMotionEvent_getTouchMinor` — R_ARM_JUMP_SLOT
+- `AMotionEvent_getX` — R_ARM_JUMP_SLOT
+- `AMotionEvent_getXPrecision` — R_ARM_JUMP_SLOT
+- `AMotionEvent_getY` — R_ARM_JUMP_SLOT
+- `AMotionEvent_getYPrecision` — R_ARM_JUMP_SLOT
+- `ANativeActivity_finish` — R_ARM_JUMP_SLOT
+- `ASensorEventQueue_disableSensor` — R_ARM_JUMP_SLOT
+- `ASensorEventQueue_enableSensor` — R_ARM_JUMP_SLOT
+- `ASensorEventQueue_getEvents` — R_ARM_JUMP_SLOT
+- `ASensorEventQueue_setEventRate` — R_ARM_JUMP_SLOT
+- `ASensorManager_createEventQueue` — R_ARM_JUMP_SLOT
+- `ASensorManager_destroyEventQueue` — R_ARM_JUMP_SLOT
+- `ASensorManager_getDefaultSensor` — R_ARM_JUMP_SLOT
+- `ASensorManager_getInstance` — R_ARM_JUMP_SLOT
+- `ASensorManager_getSensorList` — R_ARM_JUMP_SLOT
+- `ASensor_getMinDelay` — R_ARM_JUMP_SLOT
+- `ASensor_getType` — R_ARM_JUMP_SLOT
+- `AndroidBitmap_getInfo` — R_ARM_JUMP_SLOT
+- `AndroidBitmap_lockPixels` — R_ARM_JUMP_SLOT
+- `__srget` — R_ARM_JUMP_SLOT
+- `atol` — R_ARM_JUMP_SLOT
+- `bsd_signal` — R_ARM_JUMP_SLOT
+- `cacheflush` — R_ARM_JUMP_SLOT
+- `inet_ntoa` — R_ARM_JUMP_SLOT
+- `mprotect` — R_ARM_JUMP_SLOT
+- `pthread_exit` — R_ARM_JUMP_SLOT
+- `sched_get_priority_max` — R_ARM_JUMP_SLOT
+- `sched_get_priority_min` — R_ARM_JUMP_SLOT
+- `sigaltstack` — R_ARM_JUMP_SLOT
 
-### `libSkynestSDK.so` — 76 unmatched names
-`__android_log_print`, `__sF`, `__stack_chk_fail`, `__stack_chk_guard`, `_ctype_`, `_tolower_tab_`, `_toupper_tab_`, `abort`, `access`, `bind`, `bsearch`, `chmod`, `clock_gettime`, `close`, `closedir`, `connect`, `dup`, `fclose`, `fcntl`, `fflush`, `fgets`, `fopen`, `fprintf`, `fputc`, `fputs`, `fread`, `fseek`, `fstat`, `fsync`, `ftell`, `fwrite`, `getcwd`, `gethostname`, `getpeername`, `getsockname`, `getsockopt`, `gettimeofday`, `ioctl`, `isspace`, `lseek`, `mkdir`, `mmap`, `nanosleep`, `open`, `opendir`, `pathconf`, `pipe`, `poll`, `printf`, `pthread_once`, `qsort`, `read`, `recv`, `recvfrom`, `rename`, `rmdir`, `send`, `setsockopt`, `siglongjmp`, `sigsetjmp`, `snprintf`, `socket`, `sprintf`, `sscanf`, `stat`, `statfs`, `strtod`, `strtol`, `strtoll`, `strtoul`, `strtoull`, `unlink`, `utime`, `vsnprintf`, `write`, `writev`
+### `libSkynestSDK.so` — 0 unmatched names
+No unmatched names in this static comparison.
 
-### `libadcolony.so` — 24 unmatched names
-`__aeabi_memset`, `__android_log_print`, `__sF`, `__stack_chk_fail`, `__stack_chk_guard`, `abort`, `close`, `dladdr`, `fprintf`, `fputc`, `gettid`, `open`, `printf`, `pthread_once`, `putchar`, `puts`, `qsort`, `read`, `sprintf`, `strlcpy`, `strtol`, `sys_siglist`, `vfprintf`, `write`
+### `libadcolony.so` — 0 unmatched names
+No unmatched names in this static comparison.
 
-### `libgnustl_shared.so` — 41 unmatched names
-`__assert2`, `__google_potentially_blocking_region_begin`, `__google_potentially_blocking_region_end`, `__sF`, `_ctype_`, `abort`, `clock_gettime`, `fclose`, `fdopen`, `fflush`, `fopen`, `fputc`, `fputs`, `fread`, `fseek`, `fstat`, `ftell`, `fwrite`, `getc`, `gettimeofday`, `getwc`, `ioctl`, `isalnum`, `isspace`, `lseek`, `nanosleep`, `poll`, `pthread_once`, `putc`, `putwc`, `read`, `sprintf`, `sscanf`, `strtod`, `strtoul`, `syscall`, `ungetc`, `ungetwc`, `vsprintf`, `write`, `writev`
+### `libgnustl_shared.so` — 0 unmatched names
+No unmatched names in this static comparison.
 
-### `libjs.so` — 30 unmatched names
-`__aeabi_memset`, `__page_size`, `__sF`, `__stack_chk_fail`, `__stack_chk_guard`, `abort`, `close`, `fputc`, `fputs`, `fwrite`, `gettimeofday`, `mmap`, `open`, `pthread_attr_destroy`, `pthread_attr_getstack`, `pthread_attr_init`, `pthread_getattr_np`, `pthread_once`, `puts`, `qsort`, `read`, `setjmp`, `snprintf`, `sprintf`, `strtol`, `syscall`, `usleep`, `vfprintf`, `vsnprintf`, `write`
+### `libjs.so` — 0 unmatched names
+No unmatched names in this static comparison.
 
 ## Interpretation and next actions
 
-1. Prioritize EGL and `ANativeWindow_setBuffersGeometry`: they are required for a real graphics path and cannot be replaced by arbitrary no-op thunks.
-2. Resolve OpenSL ES IID data symbols and interface/vtable calls together; a function-name-only implementation is insufficient.
-3. Audit C++ imports against the exact dependency export table and ELF symbol-version/visibility data before assuming `libSkynestSDK.so` will satisfy them.
-4. Add runtime diagnostics that report the importing module and relocation type for every unresolved import before constructors run.
-5. Compile with the Android NDK and validate the loader on device before estimating a playable milestone more confidently.
+1. The OpenSL ES IID names and bridge registrations are included in this audit; interface/vtable behavior still needs runtime validation.
+2. Remaining unmatched names include libc, pthread, networking, process-control, and stdio symbols. Implement only functions with correct guest ABI and semantics; do not install generic no-op stubs for process or socket APIs.
+3. Some names may be provided dynamically or through symbol-versioned dependencies; inspect ELF version tables and actual loader lookup scopes before treating every unmatched name as a fatal gap.
+4. Runtime loader diagnostics now report the importing module, symbol, and relocation type for unresolved imports; device validation is still required.
+5. NDK compilation and static checks do not establish launchability. Install/launch and gameplay validation on the target Android device remain required.
 
 ## Re-run
 `python3 tools/audit_guest_import_resolution.py`

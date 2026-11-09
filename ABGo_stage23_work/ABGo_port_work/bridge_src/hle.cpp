@@ -49,7 +49,8 @@ bool mkdir_p(const std::string& path) {
 
 // Permission-free locations first: the app's own external dir is writable without
 // storage permission on modern Android and is readable from a normal file manager;
-// app-internal dirs are the guaranteed fallback.
+// app-internal dirs are the guaranteed fallback; Documents and Downloads are
+// user-visible fallbacks (may require storage permission on newer Android).
 std::vector<std::string> crash_log_paths() {
     std::string pkg = package_name();
     return {
@@ -57,6 +58,8 @@ std::vector<std::string> crash_log_paths() {
         "/storage/emulated/0/Android/data/" + pkg + "/files/abgo_bridge_crash.txt",
         "/data/data/" + pkg + "/files/abgo_bridge_crash.txt",
         "/data/user/0/" + pkg + "/files/abgo_bridge_crash.txt",
+        "/sdcard/Documents/abgo_bridge_crash.txt",
+        "/storage/emulated/0/Documents/abgo_bridge_crash.txt",
         "/sdcard/Download/abgo_bridge_crash.txt",
         "/storage/emulated/0/Download/abgo_bridge_crash.txt",
     };

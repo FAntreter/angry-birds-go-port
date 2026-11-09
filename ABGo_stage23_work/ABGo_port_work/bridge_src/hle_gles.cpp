@@ -1,6 +1,5 @@
 // GLES 2.0 imports. Pointer arguments address guest memory, which the host GL reads in place.
 #include <GLES2/gl2.h>
-#include <EGL/egl.h>
 
 #include <mutex>
 #include <unordered_map>
@@ -119,83 +118,15 @@ void g_GetProgramiv(uint32_t p, uint32_t pname, GPtr<int32_t> out) { glGetProgra
 void g_GetShaderInfoLog(uint32_t s, int32_t n, GPtr<int32_t> len, GPtr<char> log) { glGetShaderInfoLog(s, n, len.h(), log.h()); }
 void g_GetShaderiv(uint32_t s, uint32_t pname, GPtr<int32_t> out) { glGetShaderiv(s, pname, out.h()); }
 
-
-template <typename Fn>
-Fn host_gl_proc(const char* name) {
-    auto proc = eglGetProcAddress(name);
-    return reinterpret_cast<Fn>(proc);
-}
-
-// These wrappers keep all guest-visible function addresses inside the ARM32
-// HLE thunk table. Never return a native 64-bit driver pointer to the guest.
-void g_GenVertexArraysOES(int32_t n, GPtr<uint32_t> arrays) {
-    using Fn = void (*)(GLsizei, GLuint*);
-    static Fn fn = host_gl_proc<Fn>("glGenVertexArraysOES");
-    if (!fn) fn = host_gl_proc<Fn>("glGenVertexArrays");
-    if (fn) fn(n, arrays.h());
-    else bridge_log("GLES missing host proc glGenVertexArraysOES");
-}
-void g_DeleteVertexArraysOES(int32_t n, GPtr<const uint32_t> arrays) {
-    using Fn = void (*)(GLsizei, const GLuint*);
-    static Fn fn = host_gl_proc<Fn>("glDeleteVertexArraysOES");
-    if (!fn) fn = host_gl_proc<Fn>("glDeleteVertexArrays");
-    if (fn) fn(n, arrays.h());
-    else bridge_log("GLES missing host proc glDeleteVertexArraysOES");
-}
-void g_BindVertexArrayOES(uint32_t array) {
-    using Fn = void (*)(GLuint);
-    static Fn fn = host_gl_proc<Fn>("glBindVertexArrayOES");
-    if (!fn) fn = host_gl_proc<Fn>("glBindVertexArray");
-    if (fn) fn(array);
-    else bridge_log("GLES missing host proc glBindVertexArrayOES");
-}
-uint32_t g_IsVertexArrayOES(uint32_t array) {
-    using Fn = GLboolean (*)(GLuint);
-    static Fn fn = host_gl_proc<Fn>("glIsVertexArrayOES");
-    if (!fn) fn = host_gl_proc<Fn>("glIsVertexArray");
-    if (!fn) {
-        bridge_log("GLES missing host proc glIsVertexArrayOES");
-        return GL_FALSE;
-    }
-    return fn(array);
-}
-void g_TexStorage2DCompat(uint32_t target, int32_t levels, uint32_t format, int32_t width, int32_t height) {
-    using Fn = void (*)(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
-    static Fn fn = host_gl_proc<Fn>("glTexStorage2D");
-    if (fn) fn(target, levels, format, width, height);
-    else bridge_log("GLES missing host proc glTexStorage2D");
-}
-void g_DiscardFramebufferEXT(uint32_t target, int32_t count, GPtr<const uint32_t> attachments) {
-    using Fn = void (*)(GLenum, GLsizei, const GLenum*);
-    static Fn fn = host_gl_proc<Fn>("glDiscardFramebufferEXT");
-    if (!fn) fn = host_gl_proc<Fn>("glInvalidateFramebuffer");
-    if (fn) fn(target, count, attachments.h());
-    else bridge_log("GLES missing host proc glDiscardFramebufferEXT");
-}
-// Debug marker calls do not affect rendering; provide safe no-op thunks.
-void g_InsertEventMarkerEXT(int32_t, GStr) {}
-void g_PushGroupMarkerEXT(int32_t, GStr) {}
-void g_PopGroupMarkerEXT() {}
-
 std::mutex g_str_mu;
 std::unordered_map<uint32_t, uint32_t> g_strings;
 uint32_t g_GetString(uint32_t name) {
     const auto* s = reinterpret_cast<const char*>(glGetString(name));
-    if (!s) {
-        bridge_log("GLES getString name=0x%x result=(null) error=0x%x", name, glGetError());
-        return 0;
-    }
-    // Keep the trace bounded: GL_EXTENSIONS can be a very long space-separated list.
-    bridge_log("GLES getString name=0x%x value=%.1200s", name, s);
+    if (!s) return 0;
     std::lock_guard l(g_str_mu);
     auto& slot = g_strings[name];
     if (!slot || strcmp(hp<const char>(slot), s) != 0) slot = arena::static_strdup(s);
     return slot;
-}
-uint32_t g_GetError() {
-    GLenum error = glGetError();
-    if (error != GL_NO_ERROR) bridge_log("GLES getError=0x%x", error);
-    return error;
 }
 int32_t g_GetUniformLocation(uint32_t p, GStr n) { return glGetUniformLocation(p, n.h()); }
 void g_GetUniformfv(uint32_t p, int32_t loc, GPtr<float> out) { glGetUniformfv(p, loc, out.h()); }
@@ -259,7 +190,7 @@ const hle::Def kDefs[] = {
     H("glFrontFace", g_FrontFace), H("glGenBuffers", g_GenBuffers), H("glGenFramebuffers", g_GenFramebuffers),
     H("glGenRenderbuffers", g_GenRenderbuffers), H("glGenTextures", g_GenTextures),
     H("glGetActiveUniform", g_GetActiveUniform), H("glGetAttribLocation", g_GetAttribLocation),
-    H("glGetIntegerv", g_GetIntegerv), H("glGetError", g_GetError), H("glGetProgramInfoLog", g_GetProgramInfoLog),
+    H("glGetIntegerv", g_GetIntegerv), H("glGetProgramInfoLog", g_GetProgramInfoLog),
     H("glGetProgramiv", g_GetProgramiv), H("glGetShaderInfoLog", g_GetShaderInfoLog),
     H("glGetShaderiv", g_GetShaderiv), H("glGetString", g_GetString),
     H("glGetUniformLocation", g_GetUniformLocation), H("glGetUniformfv", g_GetUniformfv),
@@ -270,18 +201,6 @@ const hle::Def kDefs[] = {
     H("glUniform4f", g_Uniform4f), H("glUniformMatrix4fv", g_UniformMatrix4fv), H("glUseProgram", g_UseProgram),
     H("glValidateProgram", g_ValidateProgram), H("glVertexAttribPointer", g_VertexAttribPointer),
     H("glViewport", g_Viewport),
-    // Extension entry points are resolved through the guest HLE table, not
-    // returned as raw host eglGetProcAddress pointers.
-    H("glGenVertexArraysOES", g_GenVertexArraysOES),
-    H("glDeleteVertexArraysOES", g_DeleteVertexArraysOES),
-    H("glBindVertexArrayOES", g_BindVertexArrayOES),
-    H("glIsVertexArrayOES", g_IsVertexArrayOES),
-    H("glTexStorage2DARB", g_TexStorage2DCompat),
-    H("glTexStorage2DEXT", g_TexStorage2DCompat),
-    H("glDiscardFramebufferEXT", g_DiscardFramebufferEXT),
-    H("glInsertEventMarkerEXT", g_InsertEventMarkerEXT),
-    H("glPushGroupMarkerEXT", g_PushGroupMarkerEXT),
-    H("glPopGroupMarkerEXT", g_PopGroupMarkerEXT),
 };
 
 }  // namespace

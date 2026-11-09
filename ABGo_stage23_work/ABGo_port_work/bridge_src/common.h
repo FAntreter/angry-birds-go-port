@@ -12,8 +12,6 @@
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, ABSW_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, ABSW_TAG, __VA_ARGS__)
 
-void bridge_log(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
-void install_crash_handlers();
 [[noreturn]] void fatal(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 
 // Verbose tracing of every import call (set ABSW_TRACE=1 at build time).

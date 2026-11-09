@@ -75,38 +75,25 @@ elf::Module* load_guest_tree(const std::string& soname, const std::string& filen
     if (!active.insert(soname).second)
         fatal("cyclic guest DT_NEEDED dependency at %s (two-phase loader required)", soname.c_str());
 
-    bridge_log("GUEST LOAD: begin %s from %s", soname.c_str(), filename.c_str());
     std::vector<uint8_t> image = read_file(own_dir() + "/" + filename);
     if (image.empty()) fatal("cannot read guest dependency %s (expected %s)", soname.c_str(), filename.c_str());
-    bridge_log("GUEST LOAD: read %s (%zu bytes)", soname.c_str(), image.size());
 
-    const auto dependencies = elf::needed(image.data(), image.size());
-    bridge_log("GUEST LOAD: %s has %zu DT_NEEDED entries", soname.c_str(), dependencies.size());
-    for (const std::string& dep : dependencies) {
-        if (kHostLibraries.count(dep)) {
-            bridge_log("GUEST LOAD: %s uses host dependency %s", soname.c_str(), dep.c_str());
-            continue;
-        }
+    for (const std::string& dep : elf::needed(image.data(), image.size())) {
+        if (kHostLibraries.count(dep)) continue;
         const std::string dep_file = guest_filename(dep);
-        bridge_log("GUEST LOAD: %s requires guest dependency %s", soname.c_str(), dep.c_str());
         load_guest_tree(dep, dep_file, loaded, active);
-        bridge_log("GUEST LOAD: dependency %s ready for %s", dep.c_str(), soname.c_str());
     }
 
-    bridge_log("GUEST LOAD: relocating/mapping %s", soname.c_str());
     elf::Module* module = elf::load(soname, image.data(), image.size());
     loaded.emplace(soname, module);
     active.erase(soname);
-    bridge_log("GUEST LOAD: running constructors for %s", soname.c_str());
     elf::run_init(module);
-    bridge_log("GUEST LOAD: complete %s", soname.c_str());
     return module;
 }
 
 }  // namespace
 
 extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*) {
-    install_crash_handlers();
     JNIEnv* env = nullptr;
     if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) return JNI_ERR;
 #if defined(__aarch64__)
@@ -114,76 +101,26 @@ extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*) {
 #else
     LOGI("absw ARM32 bridge starting (host x86_64)");
 #endif
-    bridge_log("JNI_OnLoad entered; initializing guest runtime");
     arena::init();
-    bridge_log("arena initialized");
     cpu::init();
-    bridge_log("Dynarmic CPU initialized");
     hle::init();
-    bridge_log("Android HLE initialized");
     jni::init(vm, env);
-    bridge_log("JNI bridge initialized");
 
-    bridge_log("loading embedded guest runtime");
     elf::Module* rt = elf::load("libabsw_rt.so", kGuestRt, sizeof kGuestRt);
     elf::run_init(rt);
 
     std::unordered_map<std::string, elf::Module*> loaded;
     std::unordered_set<std::string> active;
-    bridge_log("loading Angry Birds Go engine dependency tree");
     elf::Module* game = load_guest_tree("libABK.so", kGuestLibFile, loaded, active);
-    bridge_log("game engine ELF loaded; invoking guest SDK lifecycle");
 
-    // Android calls JNI_OnLoad for a library loaded by Java. The guest SDK is
-    // brought in as a DT_NEEDED dependency instead, so invoke its lifecycle hook
-    // explicitly after all guest dependencies and ELF constructors are ready.
-    // The Go SDK's JNI_OnLoad stores the JavaVM and returns JNI_VERSION_1_6.
-    if (auto it = loaded.find("libSkynestSDK.so"); it != loaded.end()) {
-        auto on_load = it->second->exports.find("JNI_OnLoad");
-        if (on_load == it->second->exports.end())
-            fatal("libSkynestSDK.so is missing JNI_OnLoad");
-        jint sdk_version;
-        {
-            jni::Scope scope(env);
-            sdk_version = static_cast<jint>(cpu::call(on_load->second, {jni::guest_vm(), 0}));
-        }
-        LOGI("libSkynestSDK.so JNI_OnLoad returned 0x%x", sdk_version);
-        if (sdk_version != JNI_VERSION_1_6)
-            fatal("libSkynestSDK.so requested unsupported JNI version 0x%x", sdk_version);
-    } else {
-        fatal("libSkynestSDK.so was not loaded as a guest dependency");
-    }
-
-    // AdColony's Java code loads "js" and "adcolony" separately after the
-    // Activity starts. Its ARM64 load stubs only satisfy Android's linker;
-    // preload the real ARM32 guest pair now so its JNI exports and
-    // RegisterNatives hook are available to the guest JNI environment.
-    elf::Module* adcolony = load_guest_tree("libadcolony.so", "libadcolony_arm32.so",
-                                            loaded, active);
-    if (auto on_load = adcolony->exports.find("JNI_OnLoad"); on_load != adcolony->exports.end()) {
-        jint sdk_version;
-        {
-            jni::Scope scope(env);
-            sdk_version = static_cast<jint>(cpu::call(on_load->second, {jni::guest_vm(), 0}));
-        }
-        LOGI("libadcolony.so JNI_OnLoad returned 0x%x", sdk_version);
-        if (sdk_version != JNI_VERSION_1_6)
-            fatal("libadcolony.so requested unsupported JNI version 0x%x", sdk_version);
-    } else {
-        fatal("libadcolony.so is missing JNI_OnLoad");
-    }
-
-    bridge_log("AdColony guest library initialized; binding game JNI exports");
     int bound = jni::bind_exports(env);
     LOGI("bound %d native methods", bound);
 
-    bridge_log("bound %d native methods; invoking game JNI_OnLoad", bound);
     jint version = JNI_VERSION_1_6;
     if (auto it = game->exports.find("JNI_OnLoad"); it != game->exports.end()) {
         jni::Scope scope(env);
         version = static_cast<jint>(cpu::call(it->second, {jni::guest_vm(), 0}));
         LOGI("guest JNI_OnLoad returned 0x%x", version);
     }
-    bridge_log("bridge startup completed; JNI version 0x%x", version);
     return version;
 }

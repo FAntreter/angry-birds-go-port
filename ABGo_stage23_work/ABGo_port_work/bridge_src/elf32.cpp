@@ -27,18 +27,12 @@ const T* at(const uint8_t* data, size_t size, size_t off, size_t count = 1) {
     return reinterpret_cast<const T*>(data + off);
 }
 
-uint32_t resolve_import(const std::string& name, bool weak, const std::string& importer, uint32_t relocation) {
+uint32_t resolve_import(const std::string& name, bool weak, const std::string& importer) {
     if (uint32_t a = find_export(name)) return a;
     if (uint32_t a = hle::resolve(name)) return a;
-    if (weak) {
-        bridge_log("UNRESOLVED WEAK IMPORT: module=%s symbol=%s relocation=%u (resolved as null)",
-                   importer.c_str(), name.c_str(), relocation);
-        return 0;
-    }
-    // Preserve the exact loader context in the app-side crash log. This is emitted
-    // during relocation, before guest constructors can call the diagnostic thunk.
-    bridge_log("UNRESOLVED STRONG IMPORT: module=%s symbol=%s relocation=%u (diagnostic thunk installed)",
-               importer.c_str(), name.c_str(), relocation);
+    if (weak) return 0;
+    LOGW("%s: unresolved %s import %s; installing diagnostic thunk (not a real implementation)",
+         importer.c_str(), weak ? "weak" : "strong", name.c_str());
     return hle::unresolved_thunk(name);
 }
 
@@ -179,11 +173,11 @@ Module* load(const std::string& name, const uint8_t* data, size_t size) {
     }
 
     std::unordered_map<uint32_t, uint32_t> cache;
-    auto sym_value = [&](uint32_t idx, uint32_t relocation) -> uint32_t {
+    auto sym_value = [&](uint32_t idx) -> uint32_t {
         if (auto it = cache.find(idx); it != cache.end()) return it->second;
         const auto& s = syms[idx];
         uint32_t v = s.st_shndx != SHN_UNDEF ? s.st_value + m->bias
-                                             : resolve_import(symname(idx), ELF32_ST_BIND(s.st_info) == STB_WEAK, m->name, relocation);
+                                             : resolve_import(symname(idx), ELF32_ST_BIND(s.st_info) == STB_WEAK, m->name);
         cache[idx] = v;
         return v;
     };
@@ -196,10 +190,10 @@ Module* load(const std::string& name, const uint8_t* data, size_t size) {
             switch (type) {
             case R_ARM_NONE_: break;
             case R_ARM_RELATIVE_: *p += m->bias; break;
-            case R_ARM_ABS32_: *p += sym_value(sym, type); break;
-            case R_ARM_REL32_: *p += sym_value(sym, type) - where; break;
+            case R_ARM_ABS32_: *p += sym_value(sym); break;
+            case R_ARM_REL32_: *p += sym_value(sym) - where; break;
             case R_ARM_GLOB_DAT_:
-            case R_ARM_JUMP_SLOT_: *p = sym_value(sym, type); break;
+            case R_ARM_JUMP_SLOT_: *p = sym_value(sym); break;
             default: fatal("%s: unsupported relocation type %u", name.c_str(), type);
             }
         }
@@ -217,24 +211,8 @@ Module* load(const std::string& name, const uint8_t* data, size_t size) {
 }
 
 void run_init(Module* m) {
-    size_t index = 0;
-    if (m->init) {
-        bridge_log("CTOR: %s DT_INIT begin at 0x%08x", m->name.c_str(), m->init);
-        cpu::call(m->init, {});
-        bridge_log("CTOR: %s DT_INIT returned", m->name.c_str());
-    }
-    for (uint32_t f : m->init_array) {
-        bridge_log("CTOR: %s init_array[%zu] begin at 0x%08x", m->name.c_str(), index, f);
-        const bool trace_crypto_startup = (m->name == "libABK.so" && index == 676);
-        if (trace_crypto_startup) {
-            bridge_log("CRYPTO STARTUP: tracing NSS/FIPS initialization calls");
-            cpu::watch_abgo_crypto_startup(m->bias);
-        }
-        cpu::call(f, {});
-        if (trace_crypto_startup) cpu::clear_abgo_crypto_startup_watch();
-        bridge_log("CTOR: %s init_array[%zu] returned", m->name.c_str(), index);
-        ++index;
-    }
+    if (m->init) cpu::call(m->init, {});
+    for (uint32_t f : m->init_array) cpu::call(f, {});
     LOGI("%s: ran %zu constructors", m->name.c_str(), m->init_array.size() + (m->init ? 1 : 0));
 }
 
@@ -253,19 +231,6 @@ const Module* owner(uint32_t addr) {
 }
 
 bool owns(uint32_t addr) { return owner(addr) != nullptr; }
-
-bool lookup_symbol(uint32_t addr, uint32_t* symbol_addr, std::string* symbol_name) {
-    const Module* m = owner(addr);
-    if (!m || m->funcs.empty()) return false;
-    const uint32_t query = addr & ~1u;
-    auto it = std::upper_bound(m->funcs.begin(), m->funcs.end(),
-                               std::make_pair(query, std::string("\xff")));
-    if (it == m->funcs.begin()) return false;
-    --it;
-    if (symbol_addr) *symbol_addr = it->first;
-    if (symbol_name) *symbol_name = it->second;
-    return true;
-}
 
 std::string describe(uint32_t addr) {
     char buf[256];

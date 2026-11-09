@@ -1,46 +1,34 @@
 // libc / libm / libdl imports of the guest, implemented on the host bionic.
 #include <arpa/inet.h>
-#include <android/log.h>
-#include <ctype.h>
 #include <dirent.h>
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <fnmatch.h>
 #include <math.h>
 #include <netinet/in.h>
-#include <netdb.h>
 #include <poll.h>
 #include <pwd.h>
 #include <sched.h>
-#include <semaphore.h>
 #include <signal.h>
 #include <sys/auxv.h>
 #include <sys/ioctl.h>
-#include <sys/resource.h>
-#include <sys/utsname.h>
-#include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/statfs.h>
-#include <sys/sendfile.h>
-#include <sys/sysinfo.h>
 #include <sys/syscall.h>
 #include <sys/system_properties.h>
 #include <sys/time.h>
 #include <sys/uio.h>
 #include <linux/futex.h>
-#include <dynarmic/interface/A32/a32.h>
 #include <time.h>
 #include <unistd.h>
 #include <utime.h>
 #include <wchar.h>
 #include <wctype.h>
 
-#include <algorithm>
 #include <climits>
 #include <cstdlib>
 #include <map>
-#include <memory>
 #include <mutex>
 #include <random>
 #include <string>
@@ -58,7 +46,6 @@ using arena::hp;
 
 // ---------------------------------------------------------------- memory
 GPtr<void> g_malloc(uint32_t n) { return {arena::gmalloc(n)}; }
-GPtr<void> g_memalign(uint32_t alignment, uint32_t n) { return {arena::gmemalign(alignment, n)}; }
 GPtr<void> g_calloc(uint32_t n, uint32_t s) { return {arena::gcalloc(n, s)}; }
 GPtr<void> g_realloc(GPtr<void> p, uint32_t n) { return {arena::grealloc(p.a, n)}; }
 void g_free(GPtr<void> p) { if (p) arena::gfree(p.a); }
@@ -91,123 +78,17 @@ int32_t g_munmap(GPtr<void> addr, uint32_t) {
     return 0;
 }
 
-// ---------------------------------------------------------------- ARM32 non-local jumps
-// Bionic ARM32 jmp_buf words: 0 sigflag/cookie, 1-2 64-bit signal mask,
-// 3 reserved, 4-19 d8-d15, 20 FPSCR, 21-28 r4-r11, 29 LR, 30 SP,
-// 31 checksum. We use a bridge-private cookie and Bionic-compatible checksum.
-constexpr uint32_t kGuestJmpCookieNoMask = 0x4278f500u;
-constexpr uint32_t kGuestJmpCookieWithMask = 0x4278f501u;
-constexpr size_t kGuestJmpFloatBase = 4;
-constexpr size_t kGuestJmpFpscr = 20;
-constexpr size_t kGuestJmpCoreBase = 21;
-constexpr size_t kGuestJmpLr = 29;
-constexpr size_t kGuestJmpSp = 30;
-constexpr size_t kGuestJmpChecksum = 31;
-
-uint64_t guest_blocked_signal_mask() {
-    sigset_t current{};
-    if (sigprocmask(SIG_SETMASK, nullptr, &current) != 0) return 0;
-    uint64_t mask = 0;
-    for (int sig = 1; sig <= 64; ++sig) {
-        if (sigismember(&current, sig) == 1) mask |= (uint64_t{1} << (sig - 1));
-    }
-    return mask;
-}
-
-void guest_restore_signal_mask(uint64_t mask) {
-    sigset_t desired{};
-    sigemptyset(&desired);
-    for (int sig = 1; sig <= 64; ++sig) {
-        if (mask & (uint64_t{1} << (sig - 1))) sigaddset(&desired, sig);
-    }
-    (void)sigprocmask(SIG_SETMASK, &desired, nullptr);
-}
-
-uint32_t guest_jmp_checksum(const uint32_t* words) {
-    uint32_t checksum = 0;
-    // Bionic's ARM32 checksum covers words 0 through 28; LR and SP are stored
-    // after the checksum inputs and are intentionally excluded.
-    for (size_t i = 0; i < 29; ++i) checksum ^= words[i];
-    return checksum;
-}
-
-void g_sigsetjmp(cpu::Ctx& c, bool save_signal_mask) {
-    const uint32_t env = c.r(0);
-    if (!env) fatal("sigsetjmp called with a null guest jmp_buf");
-    auto* words = arena::hp<uint32_t>(env);
-    words[0] = save_signal_mask ? kGuestJmpCookieWithMask : kGuestJmpCookieNoMask;
-    words[1] = words[2] = 0;
-    if (save_signal_mask) {
-        const uint64_t mask = guest_blocked_signal_mask();
-        words[1] = static_cast<uint32_t>(mask);
-        words[2] = static_cast<uint32_t>(mask >> 32);
-    }
-
-    const auto& ext = c.jit->ExtRegs();
-    for (size_t i = 0; i < 16; ++i) words[kGuestJmpFloatBase + i] = ext[16 + i];
-    words[kGuestJmpFpscr] = c.jit->Fpscr();
-    for (size_t i = 0; i < 8; ++i) words[kGuestJmpCoreBase + i] = c.r(static_cast<int>(4 + i));
-    words[kGuestJmpLr] = c.r(14);
-    words[kGuestJmpSp] = c.r(13);
-    words[kGuestJmpChecksum] = guest_jmp_checksum(words);
-    c.ret(0);
-}
-
-void g_setjmp(cpu::Ctx& c) { g_sigsetjmp(c, true); }
-void g_sigsetjmp_raw(cpu::Ctx& c) { g_sigsetjmp(c, c.r(1) != 0); }
-
-void g_longjmp(cpu::Ctx& c) {
-    const uint32_t env = c.r(0);
-    if (!env) fatal("longjmp called with a null guest jmp_buf");
-    const auto* words = arena::hp<const uint32_t>(env);
-    const uint32_t cookie = words[0];
-    if (cookie != kGuestJmpCookieNoMask && cookie != kGuestJmpCookieWithMask)
-        fatal("longjmp called with an invalid or incompatible guest jmp_buf");
-    if (words[kGuestJmpChecksum] != guest_jmp_checksum(words))
-        fatal("longjmp called with a corrupted guest jmp_buf");
-
-    const uint32_t value = c.r(1);
-    if (cookie == kGuestJmpCookieWithMask) {
-        const uint64_t mask = uint64_t{words[1]} | (uint64_t{words[2]} << 32);
-        guest_restore_signal_mask(mask);
-    }
-
-    auto& ext = c.jit->ExtRegs();
-    for (size_t i = 0; i < 16; ++i) ext[16 + i] = words[kGuestJmpFloatBase + i];
-    c.jit->SetFpscr(words[kGuestJmpFpscr]);
-    for (size_t i = 0; i < 8; ++i) c.r(static_cast<int>(4 + i)) = words[kGuestJmpCoreBase + i];
-    c.r(14) = words[kGuestJmpLr];
-    c.r(13) = words[kGuestJmpSp];
-    c.ret(value ? value : 1);
-}
-void g_siglongjmp(cpu::Ctx& c) { g_longjmp(c); }
-
 // ---------------------------------------------------------------- strings
 GPtr<void> g_memcpy(GPtr<void> d, GPtr<const void> s, uint32_t n) { if (n) memcpy(d.h(), s.h(), n); return d; }
 GPtr<void> g_memmove(GPtr<void> d, GPtr<const void> s, uint32_t n) { if (n) memmove(d.h(), s.h(), n); return d; }
 GPtr<void> g_memset(GPtr<void> d, int32_t c, uint32_t n) { if (n) memset(d.h(), c, n); return d; }
-// ARM EABI helper uses (destination, byte_count, value), unlike libc memset.
-void g_aeabi_memset(GPtr<void> d, uint32_t n, int32_t c) { if (n) memset(d.h(), c, n); }
 int32_t g_memcmp(GPtr<const void> a, GPtr<const void> b, uint32_t n) { return n ? memcmp(a.h(), b.h(), n) : 0; }
 GPtr<void> g_memchr(GPtr<const void> s, int32_t c, uint32_t n) { return {n ? g(memchr(s.h(), c, n)) : 0}; }
 GPtr<void> g_memrchr(GPtr<const void> s, int32_t c, uint32_t n) { return {n ? g(memrchr(s.h(), c, n)) : 0}; }
 GPtr<void> g_memmem(GPtr<const void> a, uint32_t an, GPtr<const void> b, uint32_t bn) {
     return {g(memmem(a.h(), an, b.h(), bn))};
 }
-GPtr<void> g_memccpy(GPtr<void> d, GPtr<const void> s, int32_t c, uint32_t n) {
-    auto* dst = static_cast<unsigned char*>(d.h());
-    auto* src = static_cast<const unsigned char*>(s.h());
-    for (uint32_t i = 0; i < n; ++i) {
-        dst[i] = src[i];
-        if (src[i] == static_cast<unsigned char>(c)) return {d.a + i + 1};
-    }
-    return {0};
-}
 uint32_t g_strlen(GStr s) { return static_cast<uint32_t>(strlen(s.h())); }
-uint32_t g_strnlen(GStr s, uint32_t n) { return static_cast<uint32_t>(strnlen(s.h(), n)); }
-GPtr<char> g_strtok(GPtr<char> s, GStr delim) { return {g(strtok(s ? s.h() : nullptr, delim.h()))}; }
-int32_t g_isspace(int32_t c) { return isspace(static_cast<unsigned char>(c)); }
-int32_t g_isalnum(int32_t c) { return isalnum(static_cast<unsigned char>(c)); }
 int32_t g_strcmp(GStr a, GStr b) { return strcmp(a.h(), b.h()); }
 int32_t g_strncmp(GStr a, GStr b, uint32_t n) { return strncmp(a.h(), b.h(), n); }
 int32_t g_strcasecmp(GStr a, GStr b) { return strcasecmp(a.h(), b.h()); }
@@ -215,15 +96,6 @@ int32_t g_strncasecmp(GStr a, GStr b, uint32_t n) { return strncasecmp(a.h(), b.
 int32_t g_strcoll(GStr a, GStr b) { return strcoll(a.h(), b.h()); }
 uint32_t g_strxfrm(GPtr<char> d, GStr s, uint32_t n) { return static_cast<uint32_t>(strxfrm(d.h(), s.h(), n)); }
 GPtr<char> g_strcpy(GPtr<char> d, GStr s) { strcpy(d.h(), s.h()); return d; }
-uint32_t g_strlcpy(GPtr<char> d, GStr s, uint32_t n) {
-    const size_t len = strlen(s.h());
-    if (n) {
-        const size_t copy = std::min(len, static_cast<size_t>(n - 1));
-        if (copy) memcpy(d.h(), s.h(), copy);
-        d.h()[copy] = '\0';
-    }
-    return static_cast<uint32_t>(len);
-}
 GPtr<char> g_strncpy(GPtr<char> d, GStr s, uint32_t n) { strncpy(d.h(), s.h(), n); return d; }
 GPtr<char> g_strcat(GPtr<char> d, GStr s) { strcat(d.h(), s.h()); return d; }
 GPtr<char> g_strncat(GPtr<char> d, GStr s, uint32_t n) { strncat(d.h(), s.h(), n); return d; }
@@ -266,18 +138,6 @@ GPtr<char> g_basename(GStr path) {
     return {buf};
 }
 int32_t g_fnmatch(GStr pat, GStr str, int32_t flags) { return fnmatch(pat.h(), str.h(), flags); }
-
-// Guest strings live in the persistent arena, so putenv's retained pointer
-// remains valid for the lifetime of the emulated process.
-int32_t g_putenv(GStr assignment) {
-    if (!assignment || !strchr(assignment.h(), '=')) { errno = EINVAL; return -1; }
-    return putenv(const_cast<char*>(assignment.h()));
-}
-GPtr<char> g_mktemp(GPtr<char> pattern) {
-    if (!pattern) { errno = EINVAL; return {0}; }
-    char* result = mktemp(pattern.h());
-    return {result ? g(result) : 0};
-}
 
 // ---------------------------------------------------------------- wide chars (wchar_t is 32-bit on both sides)
 uint32_t g_wcslen(GPtr<const wchar_t> s) { return static_cast<uint32_t>(wcslen(s.h())); }
@@ -397,63 +257,6 @@ void g_sscanf(cpu::Ctx& c) {
     c.ret(static_cast<uint32_t>(r));
 }
 
-// ---------------------------------------------------------------- guest callbacks and Android logging
-void g_qsort(cpu::Ctx& c) {
-    uint32_t base = c.arg(0), count = c.arg(1), width = c.arg(2), compare = c.arg(3);
-    if (!base || !compare || !width || count < 2) { c.ret(0); return; }
-    char* p = hp<char>(base);
-    // Sort element indices so the guest comparator receives pointers to intact
-    // guest objects; sorting a flat char range would compare individual bytes.
-    std::vector<uint32_t> order(count);
-    for (uint32_t i = 0; i < count; ++i) order[i] = i;
-    std::sort(order.begin(), order.end(), [=](uint32_t a, uint32_t b) {
-        uint32_t ga = base + a * width;
-        uint32_t gb = base + b * width;
-        return static_cast<int32_t>(cpu::call(compare, {ga, gb})) < 0;
-    });
-    std::vector<char> sorted(size_t{count} * width);
-    for (uint32_t i = 0; i < count; ++i) {
-        memcpy(sorted.data() + size_t{i} * width, p + size_t{order[i]} * width, width);
-    }
-    memcpy(p, sorted.data(), sorted.size());
-    c.ret(0);
-}
-void g_bsearch(cpu::Ctx& c) {
-    uint32_t key = c.arg(0), base = c.arg(1), count = c.arg(2), width = c.arg(3), compare = c.arg(4);
-    if (!key || !base || !compare || !width) { c.ret(0); return; }
-    uint32_t lo = 0, hi = count;
-    while (lo < hi) {
-        uint32_t mid = lo + (hi - lo) / 2;
-        uint32_t item = base + mid * width;
-        int32_t order = static_cast<int32_t>(cpu::call(compare, {key, item}));
-        if (order < 0) hi = mid;
-        else if (order > 0) lo = mid + 1;
-        else { c.ret(item); return; }
-    }
-    c.ret(0);
-}
-void g_android_log_print(cpu::Ctx& c) {
-    int32_t prio = static_cast<int32_t>(c.arg(0));
-    const char* tag = hp<const char>(c.arg(1));
-    const char* fmt = hp<const char>(c.arg(2));
-    __android_log_write(prio, tag ? tag : "guest", fmt ? fmt : "");
-    c.ret(0);
-}
-void g_android_log_assert(cpu::Ctx& c) {
-    const char* cond = hp<const char>(c.arg(0));
-    const char* tag = hp<const char>(c.arg(1));
-    const char* fmt = hp<const char>(c.arg(2));
-    __android_log_write(ANDROID_LOG_FATAL, tag ? tag : "guest",
-                        cond && *cond ? cond : (fmt ? fmt : "assertion failed"));
-    std::abort();
-}
-int32_t g_mmap2(GPtr<void> addr, uint32_t len, int32_t prot, int32_t flags, int32_t fd, uint32_t page_off) {
-    return static_cast<int32_t>(g_mmap(addr, len, prot, flags, fd, page_off << 12));
-}
-int32_t g_usleep(uint32_t usec) { return usleep(usec); }
-uint32_t g_sleep(uint32_t seconds) { return sleep(seconds); }
-uint32_t g_get_h_errno() { static thread_local uint32_t addr = arena::static_alloc(4, 4); return addr; }
-
 // ---------------------------------------------------------------- math (softfp: doubles in core register pairs)
 #define M1(n) double m_##n(double x) { return ::n(x); }
 #define M1F(n) float m_##n(float x) { return ::n(x); }
@@ -461,76 +264,18 @@ uint32_t g_get_h_errno() { static thread_local uint32_t addr = arena::static_all
 #define M2F(n) float m_##n(float x, float y) { return ::n(x, y); }
 M1(acos) M1(asin) M1(atan) M1(ceil) M1(cos) M1(cosh) M1(exp) M1(floor) M1(log) M1(log10) M1(rint) M1(sin)
 M1(sinh) M1(sqrt) M1(tan) M1(tanh) M1(trunc)
-M1F(acosf) M1F(asinf) M1F(atanf) M1F(ceilf) M1F(cosf) M1F(expf) M1F(fabsf) M1F(floorf) M1F(logf) M1F(sinf) M1F(sqrtf) M1F(tanf)
+M1F(ceilf) M1F(cosf) M1F(floorf) M1F(sinf) M1F(sqrtf) M1F(tanf)
 M2(atan2) M2(fmod) M2(pow) M2F(atan2f) M2F(fmodf) M2F(powf)
 double m_ldexp(double x, int32_t e) { return ldexp(x, e); }
 double m_frexp(double x, GPtr<int32_t> e) { int ee; double r = frexp(x, &ee); *e.h() = ee; return r; }
 double m_modf(double x, GPtr<double> ip) { double i; double r = modf(x, &i); memcpy(ip.h(), &i, 8); return r; }
 int32_t m_isnan(double x) { return std::isnan(x); }
-int32_t m_isinf(double x) { return std::isinf(x); }
-int32_t m_lrint(double x) { return static_cast<int32_t>(lrint(x)); }
 int32_t g_lrand48() { return static_cast<int32_t>(lrand48()); }
 void g_srand48(int32_t s) { srand48(s); }
 
 // ---------------------------------------------------------------- time
 struct GTimeval { int32_t sec, usec; };
 struct GTimespec { int32_t sec, nsec; };
-
-struct GuestSem { sem_t host{}; };
-std::mutex g_sem_mu;
-std::unordered_map<uint32_t, std::shared_ptr<GuestSem>> g_semaphores;
-
-std::shared_ptr<GuestSem> find_guest_sem(uint32_t address) {
-    std::lock_guard lock(g_sem_mu);
-    auto it = g_semaphores.find(address);
-    if (it == g_semaphores.end()) { errno = EINVAL; return {}; }
-    return it->second;
-}
-
-int32_t g_sem_init(GPtr<uint32_t> sem, int32_t pshared, uint32_t value) {
-    if (!sem) { errno = EINVAL; return -1; }
-    // The guest allocation is private to this emulated process. Do not claim
-    // process-shared semantics that cannot be provided by the address map.
-    if (pshared != 0) { errno = ENOSYS; return -1; }
-    auto object = std::make_shared<GuestSem>();
-    std::lock_guard lock(g_sem_mu);
-    if (g_semaphores.contains(sem.a)) { errno = EBUSY; return -1; }
-    if (sem_init(&object->host, 0, value) != 0) return -1;
-    g_semaphores.emplace(sem.a, std::move(object));
-    return 0;
-}
-int32_t g_sem_destroy(GPtr<uint32_t> sem) {
-    if (!sem) { errno = EINVAL; return -1; }
-    std::lock_guard lock(g_sem_mu);
-    auto it = g_semaphores.find(sem.a);
-    if (it == g_semaphores.end()) { errno = EINVAL; return -1; }
-    if (sem_destroy(&it->second->host) != 0) return -1;
-    g_semaphores.erase(it);
-    return 0;
-}
-int32_t g_sem_getvalue(GPtr<uint32_t> sem, GPtr<int32_t> value) {
-    if (!sem || !value) { errno = EINVAL; return -1; }
-    auto object = find_guest_sem(sem.a);
-    return object ? sem_getvalue(&object->host, value.h()) : -1;
-}
-int32_t g_sem_post(GPtr<uint32_t> sem) {
-    if (!sem) { errno = EINVAL; return -1; }
-    auto object = find_guest_sem(sem.a);
-    return object ? sem_post(&object->host) : -1;
-}
-int32_t g_sem_wait(GPtr<uint32_t> sem) {
-    if (!sem) { errno = EINVAL; return -1; }
-    auto object = find_guest_sem(sem.a);
-    return object ? sem_wait(&object->host) : -1;
-}
-int32_t g_sem_timedwait(GPtr<uint32_t> sem, GPtr<const GTimespec> timeout) {
-    if (!sem || !timeout) { errno = EINVAL; return -1; }
-    auto object = find_guest_sem(sem.a);
-    if (!object) return -1;
-    const GTimespec guest = *timeout.h();
-    struct timespec host{guest.sec, guest.nsec};
-    return sem_timedwait(&object->host, &host);
-}
 struct GTm { int32_t sec, min, hour, mday, mon, year, wday, yday, isdst, gmtoff; uint32_t zone; };
 
 void tm_to_guest(const struct tm& t, GTm* o) {
@@ -609,14 +354,6 @@ int32_t g_utime(GStr path, GPtr<const int32_t> times) {
     struct utimbuf u{times.h()[0], times.h()[1]};
     return utime(path.h(), &u);
 }
-int32_t g_utimes(GStr path, GPtr<const GTimeval> times) {
-    if (!times) return utimes(path.h(), nullptr);
-    struct timeval tv[2] = {
-        {times.h()[0].sec, times.h()[0].usec},
-        {times.h()[1].sec, times.h()[1].usec}
-    };
-    return utimes(path.h(), tv);
-}
 
 // ---------------------------------------------------------------- file system
 int host_open_flags(int32_t f) {
@@ -636,106 +373,14 @@ int32_t guest_open_flags(int f) {
     return r;
 }
 
-int32_t g_open(GStr path, int32_t flags, int32_t mode) {
-    const char* p = path.h();
-    bridge_log("IO: open begin path=%s flags=0x%x", p ? p : "(null)", flags);
-    int32_t fd = open(p, host_open_flags(flags), mode);
-    bridge_log("IO: open end path=%s fd=%d errno=%d", p ? p : "(null)", fd, fd < 0 ? errno : 0);
-    return fd;
-}
+int32_t g_open(GStr path, int32_t flags, int32_t mode) { return open(path.h(), host_open_flags(flags), mode); }
 int32_t g_close(int32_t fd) { return close(fd); }
-int32_t g_read(cpu::Ctx* c, int32_t fd, GPtr<void> b, uint32_t n) {
-    char fd_path[64] = {};
-    char target[PATH_MAX] = {};
-    snprintf(fd_path, sizeof(fd_path), "/proc/self/fd/%d", fd);
-    ssize_t target_len = readlink(fd_path, target, sizeof(target) - 1);
-    if (target_len >= 0) target[target_len] = '\0';
-    else snprintf(target, sizeof(target), "(readlink errno=%d)", errno);
-    struct stat st = {};
-    int stat_result = fstat(fd, &st);
-    const uint32_t caller = c ? c->r(14) : 0;
-    bridge_log("IO: read begin caller=0x%08x from=%s fd=%d target=%s size=%u mode=0%o stat=%d",
-               caller, elf::describe(caller).c_str(), fd, target, n,
-               stat_result == 0 ? st.st_mode : 0, stat_result);
-    int32_t result = static_cast<int32_t>(read(fd, b.h(), n));
-    bridge_log("IO: read end caller=0x%08x fd=%d target=%s result=%d errno=%d", caller, fd, target, result,
-               result < 0 ? errno : 0);
-    return result;
-}
+int32_t g_read(int32_t fd, GPtr<void> b, uint32_t n) { return static_cast<int32_t>(read(fd, b.h(), n)); }
 int32_t g_write(int32_t fd, GPtr<const void> b, uint32_t n) { return static_cast<int32_t>(write(fd, b.h(), n)); }
 int32_t g_lseek(int32_t fd, int32_t off, int32_t whence) { return static_cast<int32_t>(lseek(fd, off, whence)); }
-int64_t g_lseek64(int32_t fd, int64_t off, int32_t whence) { return static_cast<int64_t>(lseek(fd, static_cast<off_t>(off), whence)); }
 int32_t g_fsync(int32_t fd) { return fsync(fd); }
-// The guest is ARM32 bionic: off_t is a signed 32-bit value. The ARM64
-// host uses a 64-bit off_t, so translate the optional offset explicitly.
-int32_t g_sendfile(int32_t out_fd, int32_t in_fd, GPtr<int32_t> guest_offset, uint32_t count) {
-    off_t host_offset = 0;
-    off_t* host_offset_ptr = nullptr;
-    if (guest_offset) {
-        host_offset = static_cast<off_t>(*guest_offset.h());
-        host_offset_ptr = &host_offset;
-    }
-    ssize_t result = sendfile(out_fd, in_fd, host_offset_ptr, static_cast<size_t>(count));
-    if (result >= 0 && guest_offset) {
-        *guest_offset.h() = static_cast<int32_t>(host_offset);
-    }
-    return static_cast<int32_t>(result);
-}
-struct GuestRlimit { uint32_t cur, max; };
-int32_t g_getrlimit(int32_t resource, GPtr<GuestRlimit> out) {
-    struct rlimit host{};
-    if (getrlimit(resource, &host) != 0) return -1;
-    constexpr rlim_t kGuestInfinity = 0xffffffffu;
-    out.h()->cur = host.rlim_cur == RLIM_INFINITY || host.rlim_cur > kGuestInfinity
-        ? static_cast<uint32_t>(kGuestInfinity) : static_cast<uint32_t>(host.rlim_cur);
-    out.h()->max = host.rlim_max == RLIM_INFINITY || host.rlim_max > kGuestInfinity
-        ? static_cast<uint32_t>(kGuestInfinity) : static_cast<uint32_t>(host.rlim_max);
-    return 0;
-}
-int32_t g_setrlimit(int32_t resource, GPtr<const GuestRlimit> in) {
-    constexpr uint32_t kGuestInfinity = 0xffffffffu;
-    struct rlimit host{};
-    host.rlim_cur = in.h()->cur == kGuestInfinity ? RLIM_INFINITY : in.h()->cur;
-    host.rlim_max = in.h()->max == kGuestInfinity ? RLIM_INFINITY : in.h()->max;
-    return setrlimit(resource, &host);
-}
-int32_t g_uname(GPtr<uint8_t> out) {
-    struct utsname host{};
-    if (uname(&host) != 0) return -1;
-    // ARM32 bionic utsname: six fixed 65-byte NUL-terminated fields.
-    static_assert(sizeof(host.sysname) == 65, "unexpected host utsname field size");
-    uint8_t* p = out.h();
-    memcpy(p + 0, host.sysname, 65);
-    memcpy(p + 65, host.nodename, 65);
-    memcpy(p + 130, host.release, 65);
-    memcpy(p + 195, host.version, 65);
-    memcpy(p + 260, host.machine, 65);
-    memcpy(p + 325, host.domainname, 65);
-    return 0;
-}
-int32_t g_flock(int32_t fd, int32_t operation) { return flock(fd, operation); }
 int32_t g_dup(int32_t fd) { return dup(fd); }
-int32_t g_dup2(int32_t oldfd, int32_t newfd) { return dup2(oldfd, newfd); }
-int32_t g_fchmod(int32_t fd, uint32_t mode) { return fchmod(fd, mode); }
-int32_t g_fchown(int32_t fd, uint32_t owner, uint32_t group) { return fchown(fd, owner, group); }
-int32_t g_ftruncate(int32_t fd, int64_t length) { return ftruncate(fd, static_cast<off_t>(length)); }
-int32_t g_chdir(GStr path) { return chdir(path.h()); }
-int32_t g_readlink(GStr path, GPtr<char> buf, uint32_t size) { return static_cast<int32_t>(readlink(path.h(), buf.h(), size)); }
-int32_t g_gettid() {
-#ifdef SYS_gettid
-    return static_cast<int32_t>(syscall(SYS_gettid));
-#else
-    return -1;
-#endif
-}
-int32_t g_pipe(cpu::Ctx* c, GPtr<int32_t> fds) {
-    const uint32_t caller = c ? c->r(14) : 0;
-    int32_t result = pipe(reinterpret_cast<int*>(fds.h()));
-    bridge_log("IO: pipe caller=0x%08x from=%s result=%d fds=%d,%d",
-               caller, elf::describe(caller).c_str(), result,
-               result == 0 ? fds.h()[0] : -1, result == 0 ? fds.h()[1] : -1);
-    return result;
-}
+int32_t g_pipe(GPtr<int32_t> fds) { return pipe(reinterpret_cast<int*>(fds.h())); }
 int32_t g_poll(GPtr<struct pollfd> fds, uint32_t n, int32_t timeout) { return poll(fds.h(), n, timeout); }
 int32_t g_writev(int32_t fd, GPtr<const uint32_t> iov, int32_t cnt) {
     std::vector<struct iovec> v(static_cast<size_t>(cnt > 0 ? cnt : 0));
@@ -854,202 +499,9 @@ int32_t g_readdir_r(uint32_t t, GPtr<uint8_t> entry, GPtr<uint32_t> result) {
     *result.h() = entry.a;
     return 0;
 }
-GPtr<uint8_t> g_readdir(uint32_t t) {
-    DIR* d = host_dir(t);
-    if (!d) { errno = EBADF; return {0}; }
-    static_assert(sizeof(struct dirent) == 280, "bionic dirent layout");
-    static thread_local uint32_t entry = arena::static_alloc(sizeof(struct dirent), 4);
-    errno = 0;
-    struct dirent* e = readdir(d);
-    if (!e) return {0};
-    memcpy(h(entry), e, sizeof(struct dirent));
-    return {entry};
-}
-
-// ARM32 addrinfo uses 32-bit pointers and size_t; translate every node rather
-// than exposing the host's 64-bit struct layout to guest code.
-struct GAddrInfo {
-    int32_t flags, family, socktype, protocol;
-    uint32_t addrlen, addr, canonname, next;
-};
-static_assert(sizeof(GAddrInfo) == 32);
-std::mutex g_addrinfo_mu;
-std::unordered_map<uint32_t, std::vector<uint32_t>> g_addrinfo_allocations;
-
-int32_t g_getaddrinfo(GStr node, GStr service, GPtr<const GAddrInfo> guest_hints, GPtr<uint32_t> guest_result) {
-    if (!guest_result) return EAI_FAIL;
-    *guest_result.h() = 0;
-    struct addrinfo hints{};
-    struct addrinfo* host_result = nullptr;
-    if (guest_hints) {
-        const auto& in = *guest_hints.h();
-        hints.ai_flags = in.flags;
-        hints.ai_family = in.family;
-        hints.ai_socktype = in.socktype;
-        hints.ai_protocol = in.protocol;
-    }
-    int status = getaddrinfo(node ? node.h() : nullptr, service ? service.h() : nullptr,
-                             guest_hints ? &hints : nullptr, &host_result);
-    if (status != 0) return status;
-
-    std::vector<uint32_t> allocations;
-    uint32_t head = 0, tail = 0;
-    auto allocate = [&](uint32_t bytes) -> uint32_t {
-        uint32_t address = arena::gcalloc(1, bytes);
-        if (address) allocations.push_back(address);
-        return address;
-    };
-    for (const struct addrinfo* item = host_result; item; item = item->ai_next) {
-        uint32_t guest_node = allocate(sizeof(GAddrInfo));
-        uint32_t guest_addr = item->ai_addrlen ? allocate(static_cast<uint32_t>(item->ai_addrlen)) : 0;
-        uint32_t guest_name = item->ai_canonname ? allocate(static_cast<uint32_t>(strlen(item->ai_canonname) + 1)) : 0;
-        if (!guest_node || (item->ai_addrlen && !guest_addr) || (item->ai_canonname && !guest_name)) {
-            for (uint32_t address : allocations) arena::gfree(address);
-            freeaddrinfo(host_result);
-            return EAI_MEMORY;
-        }
-        if (guest_addr) memcpy(h(guest_addr), item->ai_addr, item->ai_addrlen);
-        if (guest_name) memcpy(h(guest_name), item->ai_canonname, strlen(item->ai_canonname) + 1);
-        auto* out = hp<GAddrInfo>(guest_node);
-        out->flags = item->ai_flags;
-        out->family = item->ai_family;
-        out->socktype = item->ai_socktype;
-        out->protocol = item->ai_protocol;
-        out->addrlen = static_cast<uint32_t>(item->ai_addrlen);
-        out->addr = guest_addr;
-        out->canonname = guest_name;
-        if (!head) head = guest_node;
-        if (tail) hp<GAddrInfo>(tail)->next = guest_node;
-        tail = guest_node;
-    }
-    freeaddrinfo(host_result);
-    if (head) {
-        std::lock_guard lock(g_addrinfo_mu);
-        g_addrinfo_allocations.emplace(head, std::move(allocations));
-    }
-    *guest_result.h() = head;
-    return 0;
-}
-void g_freeaddrinfo(GPtr<GAddrInfo> result) {
-    if (!result) return;
-    std::vector<uint32_t> allocations;
-    {
-        std::lock_guard lock(g_addrinfo_mu);
-        auto it = g_addrinfo_allocations.find(result.a);
-        if (it == g_addrinfo_allocations.end()) return;
-        allocations = std::move(it->second);
-        g_addrinfo_allocations.erase(it);
-    }
-    for (uint32_t address : allocations) arena::gfree(address);
-}
-
-// Legacy resolver results contain 32-bit guest pointers. Keep a per-thread
-// guest-layout snapshot, valid until the next host resolver call on this thread.
-struct GHostEnt { uint32_t name, aliases; int32_t addrtype, length; uint32_t addr_list; };
-uint32_t copy_hostent(const struct hostent* in) {
-    if (!in) return 0;
-    constexpr uint32_t kName = 20;
-    constexpr uint32_t kAliases = kName + 256;
-    constexpr uint32_t kAddresses = kAliases + 16 * 4;
-    constexpr uint32_t kAliasText = kAddresses + 16 * 4;
-    constexpr uint32_t kAddressText = kAliasText + 16 * 256;
-    constexpr uint32_t kBytes = kAddressText + 16 * 16;
-    static thread_local uint32_t block = arena::static_alloc(kBytes, 4);
-    if (!block) return 0;
-    memset(h(block), 0, kBytes);
-    auto* out = hp<GHostEnt>(block);
-    out->name = block + kName;
-    out->aliases = block + kAliases;
-    out->addrtype = in->h_addrtype;
-    out->length = in->h_length;
-    out->addr_list = block + kAddresses;
-    if (in->h_name) strncpy(reinterpret_cast<char*>(h(block + kName)), in->h_name, 255);
-    auto* aliases = hp<uint32_t>(block + kAliases);
-    if (in->h_aliases) for (uint32_t i = 0; i < 15 && in->h_aliases[i]; ++i) {
-        aliases[i] = block + kAliasText + i * 256;
-        strncpy(reinterpret_cast<char*>(h(aliases[i])), in->h_aliases[i], 255);
-    }
-    auto* addresses = hp<uint32_t>(block + kAddresses);
-    if (in->h_addr_list && in->h_length > 0 && in->h_length <= 16) {
-        for (uint32_t i = 0; i < 15 && in->h_addr_list[i]; ++i) {
-            addresses[i] = block + kAddressText + i * 16;
-            memcpy(h(addresses[i]), in->h_addr_list[i], in->h_length);
-        }
-    }
-    return block;
-}
-uint32_t g_gethostbyname(GStr name) { return copy_hostent(gethostbyname(name.h())); }
-uint32_t g_gethostbyname2(GStr name, int32_t family) { return copy_hostent(gethostbyname2(name.h(), family)); }
-uint32_t g_gethostbyaddr(GPtr<const void> address, uint32_t length, int32_t type) {
-    return copy_hostent(gethostbyaddr(address.h(), static_cast<socklen_t>(length), type));
-}
-
-struct GProtoEnt { uint32_t name, aliases; int32_t proto; };
-uint32_t copy_protoent(const struct protoent* in) {
-    if (!in) return 0;
-    constexpr uint32_t kName = 12;
-    constexpr uint32_t kAliases = kName + 256;
-    constexpr uint32_t kAliasText = kAliases + 16 * 4;
-    constexpr uint32_t kBytes = kAliasText + 16 * 256;
-    static thread_local uint32_t block = arena::static_alloc(kBytes, 4);
-    if (!block) return 0;
-    memset(h(block), 0, kBytes);
-    auto* out = hp<GProtoEnt>(block);
-    out->name = block + kName;
-    out->aliases = block + kAliases;
-    out->proto = in->p_proto;
-    if (in->p_name) strncpy(reinterpret_cast<char*>(h(block + kName)), in->p_name, 255);
-    auto* aliases = hp<uint32_t>(block + kAliases);
-    if (in->p_aliases) for (uint32_t i = 0; i < 15 && in->p_aliases[i]; ++i) {
-        aliases[i] = block + kAliasText + i * 256;
-        strncpy(reinterpret_cast<char*>(h(aliases[i])), in->p_aliases[i], 255);
-    }
-    return block;
-}
-uint32_t g_getprotobyname(GStr name) { return copy_protoent(getprotobyname(name.h())); }
-uint32_t g_getprotobynumber(int32_t number) { return copy_protoent(getprotobynumber(number)); }
-
-int32_t g_getnameinfo(GPtr<const sockaddr> address, uint32_t address_length,
-                      GPtr<char> host, uint32_t host_length,
-                      GPtr<char> service, uint32_t service_length, int32_t flags) {
-    return getnameinfo(address.h(), static_cast<socklen_t>(address_length),
-                       host ? host.h() : nullptr, host_length,
-                       service ? service.h() : nullptr, service_length, flags);
-}
 
 // ---------------------------------------------------------------- sockets (sockaddr layouts are ABI-neutral)
 int32_t g_socket(int32_t d, int32_t t, int32_t p) { return socket(d, t, p); }
-
-int32_t g_accept(int32_t fd, GPtr<sockaddr> address, GPtr<socklen_t> length) {
-    return accept(fd, address ? address.h() : nullptr, length ? length.h() : nullptr);
-}
-int32_t g_listen(int32_t fd, int32_t backlog) { return listen(fd, backlog); }
-int32_t g_sendto(int32_t fd, GPtr<const void> buffer, uint32_t length, int32_t flags,
-                 GPtr<const sockaddr> address, uint32_t address_length) {
-    return static_cast<int32_t>(sendto(fd, buffer.h(), length, flags | MSG_NOSIGNAL,
-                                       address ? address.h() : nullptr, address_length));
-}
-int32_t g_shutdown(int32_t fd, int32_t how) { return shutdown(fd, how); }
-int32_t g_socketpair(int32_t domain, int32_t type, int32_t protocol, GPtr<int32_t> pair) {
-    return socketpair(domain, type, protocol, pair.h());
-}
-int32_t g_select(int32_t nfds, GPtr<uint8_t> read_bits, GPtr<uint8_t> write_bits,
-                 GPtr<uint8_t> except_bits, GPtr<GTimeval> timeout) {
-    static_assert(sizeof(fd_set) == 128, "unexpected Android fd_set ABI");
-    fd_set r{}, w{}, e{};
-    if (read_bits) memcpy(&r, read_bits.h(), sizeof(r));
-    if (write_bits) memcpy(&w, write_bits.h(), sizeof(w));
-    if (except_bits) memcpy(&e, except_bits.h(), sizeof(e));
-    struct timeval t{}, *tp = nullptr;
-    if (timeout) { t = {timeout.h()->sec, timeout.h()->usec}; tp = &t; }
-    int result = select(nfds, read_bits ? &r : nullptr, write_bits ? &w : nullptr,
-                        except_bits ? &e : nullptr, tp);
-    if (read_bits) memcpy(read_bits.h(), &r, sizeof(r));
-    if (write_bits) memcpy(write_bits.h(), &w, sizeof(w));
-    if (except_bits) memcpy(except_bits.h(), &e, sizeof(e));
-    if (timeout && tp) *timeout.h() = {static_cast<int32_t>(t.tv_sec), static_cast<int32_t>(t.tv_usec)};
-    return result;
-}
 int32_t g_bind(int32_t fd, GPtr<const sockaddr> a, uint32_t l) { return bind(fd, a.h(), l); }
 int32_t g_connect(int32_t fd, GPtr<const sockaddr> a, uint32_t l) { return connect(fd, a.h(), l); }
 int32_t g_getsockname(int32_t fd, GPtr<sockaddr> a, GPtr<socklen_t> l) { return getsockname(fd, a.h(), l.h()); }
@@ -1090,10 +542,7 @@ int32_t g_gethostname(GPtr<char> b, uint32_t n) { return gethostname(b.h(), n); 
 
 // ---------------------------------------------------------------- process / environment
 int32_t g_getpid() { return getpid(); }
-uint32_t g_getuid() { return getuid(); }
 uint32_t g_geteuid() { return geteuid(); }
-uint32_t g_getgid() { return getgid(); }
-uint32_t g_getegid() { return getegid(); }
 uint32_t g_getpwuid(uint32_t uid) {
     static uint32_t pw = arena::static_alloc(24, 4);
     struct passwd* p = getpwuid(uid);
@@ -1125,41 +574,7 @@ uint32_t g_getauxval(uint32_t type) {
     default: return 0;
     }
 }
-// Translate the host 64-bit sysinfo layout into the ARM32 guest ABI layout.
-int32_t g_sysinfo(GPtr<uint8_t> out) {
-    struct sysinfo s{};
-    if (sysinfo(&s) != 0) return -1;
-    uint8_t* p = out.h();
-    memset(p, 0, 64);
-    auto p32 = [&](int off, uint32_t v) { memcpy(p + off, &v, 4); };
-    p32(0, static_cast<uint32_t>(s.uptime));
-    for (int i = 0; i < 3; ++i) p32(4 + i * 4, static_cast<uint32_t>(s.loads[i]));
-    p32(16, static_cast<uint32_t>(s.totalram));
-    p32(20, static_cast<uint32_t>(s.freeram));
-    p32(24, static_cast<uint32_t>(s.sharedram));
-    p32(28, static_cast<uint32_t>(s.bufferram));
-    p32(32, static_cast<uint32_t>(s.totalswap));
-    p32(36, static_cast<uint32_t>(s.freeswap));
-    uint16_t procs = s.procs;
-    memcpy(p + 40, &procs, sizeof(procs));
-    p32(44, static_cast<uint32_t>(s.totalhigh));
-    p32(48, static_cast<uint32_t>(s.freehigh));
-    p32(52, static_cast<uint32_t>(s.mem_unit));
-    return 0;
-}
 int32_t g_system_property_get(GStr name, GPtr<char> value) { return __system_property_get(name.h(), value.h()); }
-int32_t g_getrandom(GPtr<void> buf, uint32_t len, uint32_t flags) {
-    bridge_log("RANDOM: getrandom import requested len=%u flags=0x%x", len, flags);
-#ifdef SYS_getrandom
-    long r = syscall(SYS_getrandom, buf.h(), static_cast<size_t>(len), flags);
-    bridge_log("RANDOM: getrandom import returned %ld errno=%d", r, r < 0 ? errno : 0);
-    return static_cast<int32_t>(r);
-#else
-    errno = ENOSYS;
-    bridge_log("RANDOM: host SYS_getrandom unavailable");
-    return -1;
-#endif
-}
 int32_t g_sched_yield() { return sched_yield(); }
 int32_t g_sigaction(int32_t, GPtr<const void>, GPtr<uint8_t> old) {
     if (old) memset(old.h(), 0, 16);
@@ -1180,17 +595,9 @@ int32_t g_raise(int32_t sig) {
     return 0;
 }
 void g_stack_chk_fail(cpu::Ctx& c) { fatal("guest stack smashing detected near %s", elf::describe(c.r(14)).c_str()); }
-void g_assert2(GStr file, int32_t line, GStr function, GStr expression) {
-    fatal("guest assertion failed: %s:%d: %s: %s", file ? file.h() : "?", line,
-          function ? function.h() : "?", expression ? expression.h() : "?");
-}
-// These are compiler/runtime instrumentation markers, not synchronization primitives.
-void g_google_potentially_blocking_region_begin() {}
-void g_google_potentially_blocking_region_end() {}
 
 void g_syscall(cpu::Ctx& c) {
     int32_t nr = static_cast<int32_t>(c.arg(0));
-    bridge_log("SYSCALL: begin nr=%d a1=0x%x a2=0x%x a3=0x%x", nr, c.arg(1), c.arg(2), c.arg(3));
     long r;
     switch (nr) {
     case 20: r = getpid(); break;                    // getpid
@@ -1200,18 +607,6 @@ void g_syscall(cpu::Ctx& c) {
         struct timespec t;
         r = clock_gettime(static_cast<int>(c.arg(1)), &t);
         if (r == 0) *hp<GTimespec>(c.arg(2)) = {static_cast<int32_t>(t.tv_sec), static_cast<int32_t>(t.tv_nsec)};
-        break;
-    }
-    case 384: {                                      // getrandom (ARM EABI)
-        uint32_t len = c.arg(2), flags = c.arg(3);
-        bridge_log("RANDOM: syscall getrandom begin len=%u flags=0x%x", len, flags);
-#ifdef SYS_getrandom
-        r = syscall(SYS_getrandom, h(c.arg(1)), static_cast<size_t>(len), flags);
-#else
-        errno = ENOSYS;
-        r = -1;
-#endif
-        bridge_log("RANDOM: syscall getrandom end result=%ld errno=%d", r, r < 0 ? errno : 0);
         break;
     }
     case 240: {                                      // futex(uaddr, op, val, timeout, uaddr2, val3)
@@ -1231,7 +626,6 @@ void g_syscall(cpu::Ctx& c) {
         errno = ENOSYS;
         r = -1;
     }
-    bridge_log("SYSCALL: end nr=%d result=%ld errno=%d", nr, r, r < 0 ? errno : 0);
     if (r < 0) cpu::set_guest_errno(errno);
     c.ret(static_cast<uint32_t>(r));
 }
@@ -1254,26 +648,6 @@ uint32_t g_dlsym(uint32_t, GStr name) {
 }
 int32_t g_dlclose(uint32_t) { return 0; }
 uint32_t g_dlerror() { uint32_t e = t_dlerror; t_dlerror = 0; return e; }
-
-// ARM32 bionic Dl_info is four 32-bit guest pointers (16 bytes).
-struct GDlInfo { uint32_t fname, fbase, sname, saddr; };
-int32_t g_dladdr(GPtr<const void> address, GPtr<GDlInfo> info) {
-    const elf::Module* module = elf::owner(address.a);
-    if (!module) return 0;
-    if (info) {
-        GDlInfo out{};
-        out.fname = interned(module->name);
-        out.fbase = module->bias;
-        uint32_t symbol_address = 0;
-        std::string symbol_name;
-        if (elf::lookup_symbol(address.a, &symbol_address, &symbol_name)) {
-            out.sname = interned(symbol_name);
-            out.saddr = symbol_address;
-        }
-        *info.h() = out;
-    }
-    return 1;
-}
 
 // ---------------------------------------------------------------- C++ runtime support
 int32_t g_cxa_atexit(uint32_t, uint32_t, uint32_t) { return 0; }
@@ -1323,39 +697,20 @@ void make_data() {
     uint32_t page = arena::static_alloc(4, 4);
     *hp<uint32_t>(page) = 4096;
     hle::add_data("__page_size", page);
-
-    // Legacy BSD sys_siglist is a guest char*[] data symbol. Never expose
-    // host pointers here: every entry must be a 32-bit address in the arena.
-    constexpr uint32_t kSignalCount = 65;
-    uint32_t siglist = arena::static_alloc(kSignalCount * sizeof(uint32_t), 4);
-    auto* guest_signals = hp<uint32_t>(siglist);
-    for (uint32_t i = 0; i < kSignalCount; ++i) {
-        const char* description = strsignal(static_cast<int>(i));
-        guest_signals[i] = arena::static_strdup(description ? description : "Unknown signal");
-    }
-    hle::add_data("sys_siglist", siglist);
-
-    // Expose a guest-width environ variable with an empty, null-terminated
-    // environment. Never hand the 64-bit host environ pointer to ARM32 code.
-    uint32_t guest_env = arena::static_alloc(sizeof(uint32_t), 4);
-    *hp<uint32_t>(guest_env) = 0;
-    uint32_t environ_var = arena::static_alloc(sizeof(uint32_t), 4);
-    *hp<uint32_t>(environ_var) = guest_env;
-    hle::add_data("environ", environ_var);
 }
 
 const hle::Def kDefs[] = {
-    H("malloc", g_malloc), H("memalign", g_memalign), H("calloc", g_calloc), H("realloc", g_realloc), H("free", g_free),
+    H("malloc", g_malloc), H("calloc", g_calloc), H("realloc", g_realloc), H("free", g_free),
     HE("mmap", g_mmap), H("munmap", g_munmap),
     H("memcpy", g_memcpy), H("memmove", g_memmove), H("memset", g_memset), H("memcmp", g_memcmp),
-    H("memchr", g_memchr), H("memrchr", g_memrchr), H("memmem", g_memmem), H("memccpy", g_memccpy),
-    H("__aeabi_memcpy", g_memcpy), H("__aeabi_memmove", g_memmove), H("__aeabi_memset", g_aeabi_memset),
-    H("strlen", g_strlen), H("strnlen", g_strnlen), H("strtok", g_strtok), H("isspace", g_isspace), H("isalnum", g_isalnum), H("strcmp", g_strcmp), H("strncmp", g_strncmp), H("strcasecmp", g_strcasecmp),
+    H("memchr", g_memchr), H("memrchr", g_memrchr), H("memmem", g_memmem),
+    H("__aeabi_memcpy", g_memcpy), H("__aeabi_memmove", g_memmove),
+    H("strlen", g_strlen), H("strcmp", g_strcmp), H("strncmp", g_strncmp), H("strcasecmp", g_strcasecmp),
     H("strncasecmp", g_strncasecmp), H("strcoll", g_strcoll), H("strxfrm", g_strxfrm), H("strcpy", g_strcpy),
-    H("strncpy", g_strncpy), H("strlcpy", g_strlcpy), H("strcat", g_strcat), H("strncat", g_strncat), H("strchr", g_strchr),
+    H("strncpy", g_strncpy), H("strcat", g_strcat), H("strncat", g_strncat), H("strchr", g_strchr),
     H("strrchr", g_strrchr), H("strstr", g_strstr), H("strpbrk", g_strpbrk), H("strcspn", g_strcspn),
     H("strdup", g_strdup), H("strtok_r", g_strtok_r), H("strerror", g_strerror), H("strerror_r", g_strerror_r),
-    H("basename", g_basename), H("fnmatch", g_fnmatch), HE("putenv", g_putenv), H("mktemp", g_mktemp),
+    H("basename", g_basename), H("fnmatch", g_fnmatch),
     H("wcslen", g_wcslen), H("wmemchr", g_wmemchr), H("wmemcmp", g_wmemcmp), H("wmemcpy", g_wmemcpy),
     H("wmemmove", g_wmemmove), H("wmemset", g_wmemset), H("wcscoll", g_wcscoll), H("wcsxfrm", g_wcsxfrm),
     H("btowc", g_btowc), H("wctob", g_wctob), H("towlower", g_towlower), H("towupper", g_towupper),
@@ -1365,35 +720,30 @@ const hle::Def kDefs[] = {
     H("acos", m_acos), H("asin", m_asin), H("atan", m_atan), H("ceil", m_ceil), H("cos", m_cos), H("cosh", m_cosh),
     H("exp", m_exp), H("floor", m_floor), H("log", m_log), H("log10", m_log10), H("rint", m_rint), H("sin", m_sin),
     H("sinh", m_sinh), H("sqrt", m_sqrt), H("tan", m_tan), H("tanh", m_tanh), H("trunc", m_trunc),
-    H("acosf", m_acosf), H("asinf", m_asinf), H("atanf", m_atanf), H("expf", m_expf), H("fabsf", m_fabsf), H("logf", m_logf), H("ceilf", m_ceilf), H("cosf", m_cosf), H("floorf", m_floorf), H("sinf", m_sinf), H("sqrtf", m_sqrtf),
-    H("tanf", m_tanf), H("__isinf", m_isinf), H("lrint", m_lrint), H("atan2", m_atan2), H("fmod", m_fmod), H("pow", m_pow), H("atan2f", m_atan2f),
+    H("ceilf", m_ceilf), H("cosf", m_cosf), H("floorf", m_floorf), H("sinf", m_sinf), H("sqrtf", m_sqrtf),
+    H("tanf", m_tanf), H("atan2", m_atan2), H("fmod", m_fmod), H("pow", m_pow), H("atan2f", m_atan2f),
     H("fmodf", m_fmodf), H("powf", m_powf), H("ldexp", m_ldexp), H("frexp", m_frexp), H("modf", m_modf),
     H("isnan", m_isnan), H("lrand48", g_lrand48), H("srand48", g_srand48),
     H("time", g_time), HE("gettimeofday", g_gettimeofday), HE("clock_gettime", g_clock_gettime),
     HE("nanosleep", g_nanosleep), H("clock", g_clock), H("difftime", g_difftime), H("gmtime_r", g_gmtime_r),
     H("localtime_r", g_localtime_r), H("gmtime", g_gmtime), H("localtime", g_localtime), H("mktime", g_mktime),
-    H("strftime", g_strftime), H("wcsftime", g_wcsftime), HE("utime", g_utime), HE("utimes", g_utimes),
-    HE("open", g_open), HE("close", g_close), HE("read", g_read), HE("write", g_write), HE("lseek", g_lseek), HE("lseek64", g_lseek64),
-    HE("fsync", g_fsync), HE("sendfile", g_sendfile), HE("getrlimit", g_getrlimit), HE("setrlimit", g_setrlimit), HE("uname", g_uname), HE("flock", g_flock), HE("dup", g_dup), HE("dup2", g_dup2), HE("fchmod", g_fchmod), HE("fchown", g_fchown), HE("ftruncate", g_ftruncate), HE("chdir", g_chdir), HE("readlink", g_readlink), HE("gettid", g_gettid), HE("pipe", g_pipe), HE("poll", g_poll), HE("writev", g_writev), HE("access", g_access),
+    H("strftime", g_strftime), H("wcsftime", g_wcsftime), HE("utime", g_utime),
+    HE("open", g_open), HE("close", g_close), HE("read", g_read), HE("write", g_write), HE("lseek", g_lseek),
+    HE("fsync", g_fsync), HE("dup", g_dup), HE("pipe", g_pipe), HE("poll", g_poll), HE("writev", g_writev), HE("access", g_access),
     HE("chmod", g_chmod), HE("mkdir", g_mkdir), HE("rmdir", g_rmdir), HE("unlink", g_unlink),
     HE("remove", g_remove), HE("rename", g_rename), HE("pathconf", g_pathconf), HE("getcwd", g_getcwd),
     HE("fcntl", g_fcntl), HE("ioctl", g_ioctl), HE("stat", g_stat), HE("fstat", g_fstat), HE("statfs", g_statfs),
-    HE("opendir", g_opendir), HE("closedir", g_closedir), H("readdir_r", g_readdir_r), H("readdir", g_readdir),
-    HE("getaddrinfo", g_getaddrinfo), H("freeaddrinfo", g_freeaddrinfo),
-    H("gethostbyname", g_gethostbyname), H("gethostbyname2", g_gethostbyname2), H("gethostbyaddr", g_gethostbyaddr), H("getnameinfo", g_getnameinfo),
-    H("getprotobyname", g_getprotobyname), H("getprotobynumber", g_getprotobynumber),
-    HE("socket", g_socket), HE("socketpair", g_socketpair), HE("accept", g_accept), HE("listen", g_listen), HE("sendto", g_sendto), HE("shutdown", g_shutdown), HE("select", g_select), HE("bind", g_bind), HE("connect", g_connect), HE("getsockname", g_getsockname),
+    HE("opendir", g_opendir), HE("closedir", g_closedir), H("readdir_r", g_readdir_r),
+    HE("socket", g_socket), HE("bind", g_bind), HE("connect", g_connect), HE("getsockname", g_getsockname),
     HE("getpeername", g_getpeername), HE("send", g_send), HE("recv", g_recv), HE("recvfrom", g_recvfrom),
     HE("setsockopt", g_setsockopt), HE("getsockopt", g_getsockopt), H("inet_addr", g_inet_addr),
     H("inet_ntop", g_inet_ntop), H("inet_pton", g_inet_pton), HE("gethostname", g_gethostname),
-    H("getpid", g_getpid), H("getuid", g_getuid), H("geteuid", g_geteuid), H("getgid", g_getgid), H("getegid", g_getegid), H("getpwuid", g_getpwuid), H("getenv", g_getenv),
+    H("getpid", g_getpid), H("geteuid", g_geteuid), H("getpwuid", g_getpwuid), H("getenv", g_getenv),
     H("setlocale", g_setlocale), H("sysconf", g_sysconf), H("getauxval", g_getauxval),
-    H("getrandom", g_getrandom), H("sysinfo", g_sysinfo), H("usleep", g_usleep), H("sleep", g_sleep), HE("sem_init", g_sem_init), HE("sem_destroy", g_sem_destroy), HE("sem_getvalue", g_sem_getvalue), HE("sem_post", g_sem_post), HE("sem_wait", g_sem_wait), HE("sem_timedwait", g_sem_timedwait), H("get_h_errno", g_get_h_errno), H("__get_h_errno", g_get_h_errno), HE("__mmap2", g_mmap2), HRAW("qsort", g_qsort), HRAW("bsearch", g_bsearch), HRAW("__android_log_print", g_android_log_print), HRAW("__android_log_assert", g_android_log_assert), H("__system_property_get", g_system_property_get), H("sched_yield", g_sched_yield),
+    H("__system_property_get", g_system_property_get), H("sched_yield", g_sched_yield),
     H("sigaction", g_sigaction), H("sigprocmask", g_sigprocmask), HRAW("abort", g_abort), H("exit", g_exit),
-    H("raise", g_raise), HRAW("setjmp", g_setjmp), HRAW("_setjmp", [](cpu::Ctx& c) { g_sigsetjmp(c, false); }), HRAW("sigsetjmp", g_sigsetjmp_raw), HRAW("longjmp", g_longjmp), HRAW("_longjmp", g_longjmp), HRAW("siglongjmp", g_siglongjmp), HRAW("__stack_chk_fail", g_stack_chk_fail), H("__assert2", g_assert2), HRAW("syscall", g_syscall),
-    H("dlopen", g_dlopen), H("dlsym", g_dlsym), H("dlclose", g_dlclose), H("dlerror", g_dlerror), H("dladdr", g_dladdr),
-    H("__google_potentially_blocking_region_begin", g_google_potentially_blocking_region_begin),
-    H("__google_potentially_blocking_region_end", g_google_potentially_blocking_region_end),
+    H("raise", g_raise), HRAW("__stack_chk_fail", g_stack_chk_fail), HRAW("syscall", g_syscall),
+    H("dlopen", g_dlopen), H("dlsym", g_dlsym), H("dlclose", g_dlclose), H("dlerror", g_dlerror),
     H("__cxa_atexit", g_cxa_atexit), H("__cxa_finalize", g_cxa_finalize), H("__errno", g_errno),
     H("__gnu_Unwind_Find_exidx", g_unwind_find_exidx),
 };

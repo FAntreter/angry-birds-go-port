@@ -6,7 +6,6 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
-#include <utility>
 #include <vector>
 
 #include "display.h"
@@ -560,7 +559,6 @@ struct NativeSlot {
 extern const NativeSlot kNatives[];
 extern const size_t kNumNatives;
 std::vector<std::atomic<uint32_t>> g_native_addr(512);
-std::atomic<uint32_t> g_native_trace_count{0};
 
 template <typename T>
 void push_arg(cpu::Args& a, T v) {
@@ -578,10 +576,6 @@ std::atomic<int> g_slot_input{-1};   // MyInputHandler.nativeInput(id, x, y, act
 template <int Slot, typename R, typename... A>
 R native_tramp(JNIEnv* env, jobject self, A... a) {
     Scope scope(env);
-    const uint32_t trace_id = g_native_trace_count.fetch_add(1, std::memory_order_relaxed);
-    if (trace_id < 160) {
-        bridge_log("JNI guest call #%u %s.%s", trace_id + 1, kNatives[Slot].cls, kNatives[Slot].name);
-    }
     if (Slot == g_slot_config.load(std::memory_order_relaxed)) display::on_native_config(env, self);
     cpu::Args args;
     args.w(g_genv).w(local(self));
@@ -595,9 +589,7 @@ R native_tramp(JNIEnv* env, jobject self, A... a) {
     }
     uint32_t fn = g_native_addr[Slot].load(std::memory_order_acquire);
     if (!fn) fatal("native %s.%s is not bound", kNatives[Slot].cls, kNatives[Slot].name);
-    bridge_log("JNI guest enter %s.%s fn=0x%08x argc=%zu", kNatives[Slot].cls, kNatives[Slot].name, fn, args.words.size() - 2);
     uint64_t r = cpu::call(fn, args.words);
-    bridge_log("JNI guest return %s.%s result=0x%016llx", kNatives[Slot].cls, kNatives[Slot].name, static_cast<unsigned long long>(r));
     if constexpr (std::is_void_v<R>) {
         return;
     } else if constexpr (std::is_pointer_v<R>) {
@@ -633,40 +625,6 @@ std::string class_name(JNIEnv* e, jclass cls) {
     return n;
 }
 
-std::string jni_encode(const char* first, const char* last) {
-    static constexpr char hex[] = "0123456789abcdef";
-    std::string out;
-    for (const char* p = first; p != last; ++p) {
-        const unsigned char ch = static_cast<unsigned char>(*p);
-        if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
-            (ch >= '0' && ch <= '9')) {
-            out.push_back(static_cast<char>(ch));
-        } else {
-            switch (ch) {
-            case '/': out.push_back('_'); break;
-            case '_': out += "_1"; break;
-            case ';': out += "_2"; break;
-            case '[': out += "_3"; break;
-            default:
-                out += "_0";
-                out.push_back(hex[(ch >> 12) & 0xF]);
-                out.push_back(hex[(ch >> 8) & 0xF]);
-                out.push_back(hex[(ch >> 4) & 0xF]);
-                out.push_back(hex[ch & 0xF]);
-                break;
-            }
-        }
-    }
-    return out;
-}
-
-std::string jni_long_name(const NativeSlot& native) {
-    const char* open = strchr(native.sig, '(');
-    const char* close = open ? strchr(open + 1, ')') : nullptr;
-    if (!open || !close) return {};
-    return std::string(native.mangled) + "__" + jni_encode(open + 1, close);
-}
-
 int find_native(const std::string& cls, const char* name, const char* sig) {
     for (size_t i = 0; i < kNumNatives; ++i)
         if (cls == kNatives[i].cls && !strcmp(name, kNatives[i].name) && !strcmp(sig, kNatives[i].sig))
@@ -675,45 +633,25 @@ int find_native(const std::string& cls, const char* name, const char* sig) {
 }
 
 jint j_RegisterNatives(uint32_t, uint32_t cls, GPtr<const uint32_t> methods, jint n) {
-    if (n < 0) {
-        LOGE("RegisterNatives: negative method count %d", n);
-        return JNI_ERR;
-    }
-    if (n == 0) return JNI_OK;
-
     JNIEnv* e = E();
     auto c = static_cast<jclass>(obj(cls));
     std::string cname = class_name(e, c);
-
-    // Validate the complete batch before changing either the host JVM or guest
-    // address table. Registering only the recognized subset and returning JNI_OK
-    // leaves Java with methods that appear registered but have no callable bridge.
-    std::vector<JNINativeMethod> host_methods;
-    std::vector<std::pair<size_t, uint32_t>> guest_methods;
-    host_methods.reserve(static_cast<size_t>(n));
-    guest_methods.reserve(static_cast<size_t>(n));
     for (jint i = 0; i < n; ++i) {
         const char* name = hp<const char>(methods.h()[3 * i]);
         const char* sig = hp<const char>(methods.h()[3 * i + 1]);
         uint32_t fn = methods.h()[3 * i + 2];
         int slot = find_native(cname, name, sig);
-        if (slot < 0 || !fn) {
-            LOGE("RegisterNatives: %s trampoline for %s.%s%s",
-                 slot < 0 ? "no" : "null", cname.c_str(), name, sig);
-            return JNI_ERR;
+        if (slot < 0) {
+            LOGE("RegisterNatives: no trampoline for %s.%s%s", cname.c_str(), name, sig);
+            continue;
         }
-        host_methods.push_back({name, sig, kNatives[slot].tramp});
-        guest_methods.emplace_back(static_cast<size_t>(slot), fn);
+        g_native_addr[static_cast<size_t>(slot)].store(fn, std::memory_order_release);
+        JNINativeMethod m{name, sig, kNatives[slot].tramp};
+        if (e->RegisterNatives(c, &m, 1) != JNI_OK) {
+            e->ExceptionClear();
+            LOGE("RegisterNatives failed for %s.%s", cname.c_str(), name);
+        }
     }
-
-    jint result = e->RegisterNatives(c, host_methods.data(), static_cast<jint>(host_methods.size()));
-    if (result != JNI_OK) {
-        LOGE("host RegisterNatives failed for class %s (status %d)", cname.c_str(), result);
-        return result;
-    }
-    for (const auto& [slot, fn] : guest_methods)
-        g_native_addr[slot].store(fn, std::memory_order_release);
-    LOGI("registered %zu guest native methods for %s", guest_methods.size(), cname.c_str());
     return JNI_OK;
 }
 
@@ -768,21 +706,8 @@ int bind_exports(JNIEnv* e) {
     int bound = 0;
     for (size_t i = 0; i < kNumNatives; ++i) {
         uint32_t fn = elf::find_export(kNatives[i].mangled);
-        if (!fn) {
-            // JNI also permits the long form (parameter descriptor appended).
-            // Some APK libraries export this form even when the method name is
-            // not overloaded in the DEX inventory.
-            const std::string long_name = jni_long_name(kNatives[i]);
-            if (!long_name.empty()) fn = elf::find_export(long_name);
-            if (fn) LOGI("resolved long JNI export %s", long_name.c_str());
-        }
         if (!fn) continue;
-        // A JNI_OnLoad/RegisterNatives call may already have supplied the
-        // authoritative guest function pointer. Do not overwrite it with an
-        // exported-symbol fallback.
-        uint32_t expected = 0;
-        g_native_addr[i].compare_exchange_strong(expected, fn, std::memory_order_release,
-                                                  std::memory_order_relaxed);
+        g_native_addr[i].store(fn, std::memory_order_release);
         jclass c = e->FindClass(kNatives[i].cls);
         if (!c) {
             e->ExceptionClear();

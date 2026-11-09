@@ -4,31 +4,31 @@
 #include <android/native_window.h>
 #include <android/native_window_jni.h>
 #include <cstdint>
-#include <atomic>
 #include <cstring>
 #include <mutex>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
 #include <vector>
-#include "common.h"
 #include "hle.h"
 #include "jni_bridge.h"
 
 namespace {
 std::mutex g_mu;
-std::atomic<uint32_t> g_swap_trace_count{0};
 uint32_t g_next = 0x70000000u;
-// Android's EGL headers typedef EGLDisplay, EGLConfig, EGLContext, and
-// EGLSurface to the same native pointer type (void*). C++ therefore cannot
-// specialize templates separately for those aliases. Keep one host-handle
-// registry for EGL's opaque pointer handles and a separate one for windows.
 template<class T> std::unordered_map<uint32_t,T>& table();
-template<> std::unordered_map<uint32_t,void*>& table<void*>() { static std::unordered_map<uint32_t,void*> t; return t; }
+template<> std::unordered_map<uint32_t,EGLDisplay>& table<EGLDisplay>() { static std::unordered_map<uint32_t,EGLDisplay> t; return t; }
+template<> std::unordered_map<uint32_t,EGLConfig>& table<EGLConfig>() { static std::unordered_map<uint32_t,EGLConfig> t; return t; }
+template<> std::unordered_map<uint32_t,EGLContext>& table<EGLContext>() { static std::unordered_map<uint32_t,EGLContext> t; return t; }
+template<> std::unordered_map<uint32_t,EGLSurface>& table<EGLSurface>() { static std::unordered_map<uint32_t,EGLSurface> t; return t; }
 template<> std::unordered_map<uint32_t,ANativeWindow*>& table<ANativeWindow*>() { static std::unordered_map<uint32_t,ANativeWindow*> t; return t; }
-
+// EGL configs, contexts, and surfaces belong to the display that created or
+// returned them. Keep this separately from host handles so terminating one
+// display cannot invalidate tokens owned by another display.
 template<class T> std::unordered_map<uint32_t,uint32_t>& owners();
-template<> std::unordered_map<uint32_t,uint32_t>& owners<void*>() { static std::unordered_map<uint32_t,uint32_t> t; return t; }
+template<> std::unordered_map<uint32_t,uint32_t>& owners<EGLConfig>() { static std::unordered_map<uint32_t,uint32_t> t; return t; }
+template<> std::unordered_map<uint32_t,uint32_t>& owners<EGLContext>() { static std::unordered_map<uint32_t,uint32_t> t; return t; }
+template<> std::unordered_map<uint32_t,uint32_t>& owners<EGLSurface>() { static std::unordered_map<uint32_t,uint32_t> t; return t; }
 
 // All guest-visible opaque handles share one token namespace. Keep allocation
 // collision-safe even after the 32-bit counter wraps; stale tokens must never
@@ -122,16 +122,8 @@ template<class T> void drop(uint32_t id) {
     if constexpr (!std::is_same_v<T, EGLDisplay> && !std::is_same_v<T, ANativeWindow*>)
         owners<T>().erase(id);
 }
-uint32_t g_eglGetDisplay(uint32_t native) {
-    uint32_t token = put(eglGetDisplay(reinterpret_cast<EGLNativeDisplayType>(static_cast<uintptr_t>(native))));
-    bridge_log("EGL getDisplay native=0x%x token=0x%x error=0x%x", native, token, eglGetError());
-    return token;
-}
-uint32_t g_eglInitialize(uint32_t d, GPtr<EGLint> major, GPtr<EGLint> minor) {
-    EGLBoolean ok = eglInitialize(get<EGLDisplay>(d), major.h(), minor.h());
-    bridge_log("EGL initialize display=0x%x ok=%u version=%d.%d error=0x%x", d, ok, major ? *major.h() : -1, minor ? *minor.h() : -1, eglGetError());
-    return ok;
-}
+uint32_t g_eglGetDisplay(uint32_t native) { return put(eglGetDisplay(reinterpret_cast<EGLNativeDisplayType>(static_cast<uintptr_t>(native)))); }
+uint32_t g_eglInitialize(uint32_t d, GPtr<EGLint> major, GPtr<EGLint> minor) { return eglInitialize(get<EGLDisplay>(d), major.h(), minor.h()); }
 uint32_t g_eglTerminate(uint32_t d) {
     EGLDisplay display = get<EGLDisplay>(d);
     if (display == EGL_NO_DISPLAY) return EGL_FALSE;
@@ -148,19 +140,13 @@ uint32_t g_eglTerminate(uint32_t d) {
     }
     return result;
 }
-uint32_t g_eglBindAPI(uint32_t api) {
-    EGLBoolean ok = eglBindAPI(api);
-    bridge_log("EGL bindAPI api=0x%x ok=%u error=0x%x", api, ok, eglGetError());
-    return ok;
-}
+uint32_t g_eglBindAPI(uint32_t api) { return eglBindAPI(api); }
 uint32_t g_eglChooseConfig(uint32_t d, GPtr<const EGLint> attrs, GPtr<uint32_t> configs, int32_t size, GPtr<EGLint> count) {
     if (size < 0 || size > 4096) return EGL_FALSE;
     std::vector<EGLConfig> tmp(static_cast<size_t>(size)); EGLint n = 0;
     EGLBoolean ok = eglChooseConfig(get<EGLDisplay>(d), attrs.h(), tmp.data(), size, &n);
     if (count) *count.h() = n;
     if (configs && ok) for (int i=0; i<n && i<size; ++i) { uint32_t token = put_owned(tmp[static_cast<size_t>(i)], d); configs.h()[i] = token; }
-    bridge_log("EGL chooseConfig display=0x%x size=%d count=%d ok=%u first=0x%x error=0x%x",
-               d, size, n, ok, configs && n > 0 ? configs.h()[0] : 0, eglGetError());
     return ok;
 }
 uint32_t g_eglGetConfigs(uint32_t d, GPtr<uint32_t> configs, int32_t size, GPtr<EGLint> count) {
@@ -176,15 +162,8 @@ uint32_t g_eglGetConfigAttrib(uint32_t d,uint32_t c,uint32_t a,GPtr<EGLint> v) {
     return eglGetConfigAttrib(get<EGLDisplay>(d),get_owned<EGLConfig>(c,d),a,v.h());
 }
 uint32_t g_eglCreateContext(uint32_t d,uint32_t c,uint32_t share,GPtr<const EGLint> attrs) {
-    if (!c || !token_belongs_to<EGLConfig>(c,d) || !token_belongs_to<EGLContext>(share,d)) {
-        bridge_log("EGL createContext rejected display=0x%x config=0x%x share=0x%x", d, c, share);
-        return 0;
-    }
-    EGLContext context = eglCreateContext(get<EGLDisplay>(d),get_owned<EGLConfig>(c,d),get_owned<EGLContext>(share,d),attrs.h());
-    uint32_t token = put_owned(context, d);
-    bridge_log("EGL createContext display=0x%x config=0x%x share=0x%x token=0x%x error=0x%x",
-               d, c, share, token, eglGetError());
-    return token;
+    if (!c || !token_belongs_to<EGLConfig>(c,d) || !token_belongs_to<EGLContext>(share,d)) return 0;
+    return put_owned(eglCreateContext(get<EGLDisplay>(d),get_owned<EGLConfig>(c,d),get_owned<EGLContext>(share,d),attrs.h()), d);
 }
 uint32_t g_eglDestroyContext(uint32_t d,uint32_t c) {
     if (!c || !token_belongs_to<EGLContext>(c,d)) return EGL_FALSE;
@@ -193,12 +172,7 @@ uint32_t g_eglDestroyContext(uint32_t d,uint32_t c) {
 uint32_t g_eglCreateWindowSurface(uint32_t d,uint32_t c,uint32_t w,GPtr<const EGLint> attrs) {
     if (!c || !token_belongs_to<EGLConfig>(c,d)) return 0;
     ANativeWindow* win=get<ANativeWindow*>(w); if(!win) return 0;
-    EGLSurface surface = eglCreateWindowSurface(get<EGLDisplay>(d), get_owned<EGLConfig>(c,d), win, attrs.h());
-    EGLint width = 0, height = 0;
-    if (surface != EGL_NO_SURFACE) { eglQuerySurface(get<EGLDisplay>(d), surface, EGL_WIDTH, &width); eglQuerySurface(get<EGLDisplay>(d), surface, EGL_HEIGHT, &height); }
-    uint32_t token = put_owned(surface, d);
-    bridge_log("EGL createWindowSurface display=0x%x config=0x%x window=0x%x token=0x%x size=%dx%d error=0x%x", d, c, w, token, width, height, eglGetError());
-    return token;
+    return put_owned(eglCreateWindowSurface(get<EGLDisplay>(d),get_owned<EGLConfig>(c,d),win,attrs.h()), d);
 }
 uint32_t g_eglDestroySurface(uint32_t d,uint32_t s) {
     if (!s || !token_belongs_to<EGLSurface>(s,d)) return EGL_FALSE;
@@ -206,16 +180,11 @@ uint32_t g_eglDestroySurface(uint32_t d,uint32_t s) {
 }
 uint32_t g_eglMakeCurrent(uint32_t d,uint32_t draw,uint32_t read,uint32_t ctx) {
     if (!token_belongs_to<EGLSurface>(draw,d) || !token_belongs_to<EGLSurface>(read,d) || !token_belongs_to<EGLContext>(ctx,d)) return EGL_FALSE;
-    EGLBoolean ok = eglMakeCurrent(get<EGLDisplay>(d), get_owned<EGLSurface>(draw,d), get_owned<EGLSurface>(read,d), get_owned<EGLContext>(ctx,d));
-    bridge_log("EGL makeCurrent display=0x%x draw=0x%x read=0x%x context=0x%x ok=%u error=0x%x", d, draw, read, ctx, ok, eglGetError());
-    return ok;
+    return eglMakeCurrent(get<EGLDisplay>(d),get_owned<EGLSurface>(draw,d),get_owned<EGLSurface>(read,d),get_owned<EGLContext>(ctx,d));
 }
 uint32_t g_eglSwapBuffers(uint32_t d,uint32_t s) {
     if (!s || !token_belongs_to<EGLSurface>(s,d)) return EGL_FALSE;
-    EGLBoolean ok = eglSwapBuffers(get<EGLDisplay>(d), get_owned<EGLSurface>(s,d));
-    uint32_t n = g_swap_trace_count.fetch_add(1, std::memory_order_relaxed);
-    if (n < 8 || !ok) bridge_log("EGL swapBuffers #%u display=0x%x surface=0x%x ok=%u error=0x%x", n + 1, d, s, ok, eglGetError());
-    return ok;
+    return eglSwapBuffers(get<EGLDisplay>(d),get_owned<EGLSurface>(s,d));
 }
 uint32_t g_eglSwapInterval(uint32_t d,int32_t i) { return eglSwapInterval(get<EGLDisplay>(d),i); }
 uint32_t g_eglSurfaceAttrib(uint32_t d,uint32_t s,int32_t a,int32_t v) {
@@ -226,12 +195,7 @@ uint32_t g_eglQuerySurface(uint32_t d,uint32_t s,int32_t a,GPtr<EGLint> v) {
     if (!s || !token_belongs_to<EGLSurface>(s,d)) return EGL_FALSE;
     return eglQuerySurface(get<EGLDisplay>(d),get_owned<EGLSurface>(s,d),a,v.h());
 }
-uint32_t g_eglQueryString(uint32_t d,uint32_t n) {
-    const char* value = eglQueryString(get<EGLDisplay>(d), n);
-    bridge_log("EGL queryString display=0x%x name=0x%x value=%s error=0x%x",
-               d, n, value ? value : "(null)", eglGetError());
-    return value ? arena::gstrdup(value) : 0;
-}
+uint32_t g_eglQueryString(uint32_t d,uint32_t n) { const char* s=eglQueryString(get<EGLDisplay>(d),n); return s ? arena::gstrdup(s) : 0; }
 uint32_t g_eglGetCurrentContext() {
     EGLContext context = eglGetCurrentContext();
     EGLDisplay current = eglGetCurrentDisplay();
@@ -242,16 +206,7 @@ uint32_t g_eglGetCurrentSurface(uint32_t which) {
     EGLDisplay current = eglGetCurrentDisplay();
     return current != EGL_NO_DISPLAY ? put_owned(surface, put(current)) : put(surface);
 }
-uint32_t g_eglGetProcAddress(GStr name) {
-    if (!name) {
-        bridge_log("EGL getProcAddress name=(null) result=0");
-        return 0;
-    }
-    const char* symbol = name.h();
-    uint32_t address = hle::resolve(symbol);
-    bridge_log("EGL getProcAddress name=%s result=0x%x", symbol, address);
-    return address;
-}
+uint32_t g_eglGetProcAddress(GStr name) { if(!name) return 0; return hle::resolve(name.h()); }
 uint32_t g_eglGetError() { return eglGetError(); }
 uint32_t g_ANativeWindow_fromSurface(uint32_t, uint32_t surface) {
     ANativeWindow* w = ANativeWindow_fromSurface(jni::env(), jni::obj(surface));

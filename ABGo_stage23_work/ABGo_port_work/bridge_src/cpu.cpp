@@ -30,20 +30,7 @@ using Dynarmic::A32::Jit;
 using Dynarmic::A32::VAddr;
 
 constexpr size_t kMaxCpus = 128;
-
 constexpr uint32_t kStackSize = 2u << 20;
-
-static std::array<uint32_t, 10> g_crypto_watch_addresses{};
-static std::atomic<uint32_t> g_crypto_watch_entrypoint{0};
-static std::atomic<uint32_t> g_crypto_watch_mask{0};
-static std::atomic<bool> g_crypto_watch_active{false};
-static std::atomic<uint32_t> g_crypto_code_logs{0};
-static constexpr const char* kCryptoWatchNames[] = {
-    "enter SECOID_Init", "enter BL_Init", "enter RNG_RNGInit",
-    "enter sftk_fips_RSA_PowerUpSelfTest", "enter BLAPI_SHVerify",
-    "return SECOID_Init", "return BL_Init", "return RNG_RNGInit",
-    "return sftk_fips_RSA_PowerUpSelfTest", "return BLAPI_SHVerify"
-};
 
 Dynarmic::ExclusiveMonitor* g_monitor;
 std::mutex g_pid_mu;
@@ -92,29 +79,7 @@ struct Callbacks final : Dynarmic::A32::UserCallbacks {
                                            __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
     }
 
-    void LogCryptoTranslateState(VAddr a, uint32_t rng);
-    std::optional<uint32_t> MemoryReadCode(VAddr a) override {
-        if (g_crypto_watch_active.load(std::memory_order_relaxed)) {
-            const uint32_t rng = g_crypto_watch_addresses[2];
-            if (rng && a >= rng && a < rng + 0x4000u) {
-                const uint32_t n = g_crypto_code_logs.fetch_add(1, std::memory_order_relaxed);
-                if (n < 512) {
-                    bridge_log("CRYPTO CODE: translated guest PC=0x%08x offset=0x%x", a, a - rng);
-                    if (a >= rng + 0x14f0u && a < rng + 0x1580u)
-                        LogCryptoTranslateState(a, rng);
-                }
-            }
-            for (uint32_t i = 0; i < g_crypto_watch_addresses.size(); ++i) {
-                if (a == g_crypto_watch_addresses[i]) {
-                    const uint32_t bit = 1u << i;
-                    if ((g_crypto_watch_mask.fetch_or(bit) & bit) == 0)
-                        bridge_log("CRYPTO STARTUP: entered %s at 0x%08x", kCryptoWatchNames[i], a);
-                    break;
-                }
-            }
-        }
-        return rd<uint32_t>(a);
-    }
+    std::optional<uint32_t> MemoryReadCode(VAddr a) override { return rd<uint32_t>(a); }
     uint8_t MemoryRead8(VAddr a) override { return rd<uint8_t>(a); }
     uint16_t MemoryRead16(VAddr a) override { return rd<uint16_t>(a); }
     uint32_t MemoryRead32(VAddr a) override { return rd<uint32_t>(a); }
@@ -131,7 +96,7 @@ struct Callbacks final : Dynarmic::A32::UserCallbacks {
     void InterpreterFallback(VAddr pc, size_t n) override;
     void CallSVC(uint32_t swi) override;
     void ExceptionRaised(VAddr pc, Dynarmic::A32::Exception e) override;
-    void AddTicks(uint64_t ticks) override;
+    void AddTicks(uint64_t) override {}
     uint64_t GetTicksRemaining() override { return ~uint64_t{0} >> 2; }
 };
 
@@ -153,7 +118,7 @@ struct GuestCpu {
         cfg.fastmem_pointer = reinterpret_cast<uintptr_t>(arena::base);
         cfg.recompile_on_fastmem_failure = true;
         cfg.coprocessors[15] = cp15;
-        cfg.enable_cycle_counting = true;
+        cfg.enable_cycle_counting = false;
         cfg.define_unpredictable_behaviour = true;
         cfg.code_cache_size = cache;
         jit = std::make_unique<Jit>(cfg);
@@ -164,58 +129,6 @@ struct GuestCpu {
         free_pid(pid);
     }
 };
-
-void Callbacks::AddTicks(uint64_t ticks) {
-    if (!g_crypto_watch_active.load(std::memory_order_relaxed) || !owner || !owner->jit)
-        return;
-    const uint32_t pc = owner->jit->Regs()[15];
-    const uint32_t rng = g_crypto_watch_addresses[2];
-    static std::atomic<uint32_t> all_tick_logs{0};
-    const uint32_t tick_n = all_tick_logs.fetch_add(1, std::memory_order_relaxed);
-    if (tick_n < 480) {
-        const auto& tr = owner->jit->Regs();
-        bridge_log("CRYPTO TICK: post_block_pc=0x%08x lr=0x%08x cpsr=0x%08x ticks=%" PRIu64
-                   " r0=0x%08x r1=0x%08x r2=0x%08x r3=0x%08x",
-                   pc, tr[14], owner->jit->Cpsr(), ticks,
-                   tr[0], tr[1], tr[2], tr[3]);
-    }
-    if (rng && pc >= rng && pc < rng + 0x4000u) {
-        static std::atomic<uint32_t> execution_logs{0};
-        const uint32_t n = execution_logs.fetch_add(1, std::memory_order_relaxed);
-        if (n < 400)
-            bridge_log("CRYPTO EXEC: guest PC=0x%08x offset_from_RNG=0x%x ticks=%" PRIu64,
-                       pc, pc - rng, ticks);
-        // Capture the live register state around the rng_init block seen in
-        // device traces (rng_init + 0x230..0x260). AddTicks runs after a
-        // translated block, so this records the actual post-block state.
-        if ((pc >= rng + 0x12e0u && pc < rng + 0x1800u) ||
-            (pc >= rng + 0x2c148u && pc < rng + 0x2c500u)) {
-            static std::atomic<uint32_t> rng_state_logs{0};
-            const uint32_t m = rng_state_logs.fetch_add(1, std::memory_order_relaxed);
-            if (m < 96) {
-                const auto& r = owner->jit->Regs();
-                bridge_log("CRYPTO STATE: pc=0x%08x off=0x%x cpsr=0x%08x ticks=%" PRIu64,
-                           r[15], r[15] - rng, owner->jit->Cpsr(), ticks);
-                bridge_log("CRYPTO STATE: r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x r6=%08x r7=%08x",
-                           r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]);
-                bridge_log("CRYPTO STATE: r8=%08x r9=%08x r10=%08x r11=%08x r12=%08x sp=%08x lr=%08x",
-                           r[8], r[9], r[10], r[11], r[12], r[13], r[14]);
-            }
-        }
-    }
-}
-
-void Callbacks::LogCryptoTranslateState(VAddr a, uint32_t rng) {
-    if (!owner || !owner->jit)
-        return;
-    const auto& r = owner->jit->Regs();
-    bridge_log("CRYPTO TRANSLATE STATE: entry_pc=0x%08x code_pc=0x%08x cpsr=0x%08x",
-               r[15], a, owner->jit->Cpsr());
-    bridge_log("CRYPTO TRANSLATE STATE: r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x r6=%08x r7=%08x",
-               r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]);
-    bridge_log("CRYPTO TRANSLATE STATE: r8=%08x r9=%08x r10=%08x r11=%08x r12=%08x sp=%08x lr=%08x",
-               r[8], r[9], r[10], r[11], r[12], r[13], r[14]);
-}
 
 struct ThreadState {
     std::vector<std::unique_ptr<GuestCpu>> cpus;  // index = host->guest nesting depth
@@ -338,27 +251,6 @@ Args& Args::d64(uint64_t v) {
     return *this;
 }
 
-void watch_abgo_crypto_startup(uint32_t bias) {
-    // Function entry points and the instruction immediately after each BL
-    // in sftk_startup_tests (libABK.so offset 0x00c88e8).
-    constexpr uint32_t offsets[] = {
-        0x00a458cc, 0x00a78844, 0x00a641dc, 0x00b004f0, 0x00bfd2ec,
-        0x00c8910, 0x00c891c, 0x00c8928, 0x00c8934, 0x00c8950
-    };
-    for (size_t i = 0; i < g_crypto_watch_addresses.size(); ++i)
-        g_crypto_watch_addresses[i] = bias + offsets[i];
-    // init_array[676] is the constructor containing sftk_startup_tests.
-    // Step this outer call as well: it branches into RNG code internally.
-    g_crypto_watch_entrypoint.store(bias + 0x00c88e8, std::memory_order_release);
-    g_crypto_watch_mask.store(0, std::memory_order_relaxed);
-    g_crypto_code_logs.store(0, std::memory_order_relaxed);
-    g_crypto_watch_active.store(true, std::memory_order_release);
-}
-
-void clear_abgo_crypto_startup_watch() {
-    g_crypto_watch_active.store(false, std::memory_order_release);
-}
-
 void init() {
     g_monitor = new Dynarmic::ExclusiveMonitor(kMaxCpus);
     pthread_key_create(&g_state_key, [](void* p) {
@@ -403,129 +295,7 @@ uint64_t call(uint32_t fn, const std::vector<uint32_t>& words) {
 
     c.returned = false;
     ++t.depth;
-    const uint32_t watched_rng = g_crypto_watch_addresses[2];
-    const uint32_t startup_entry = g_crypto_watch_entrypoint.load(std::memory_order_acquire);
-    const uint32_t call_pc = fn & ~1u;
-    const bool enters_rng_directly = watched_rng != 0 && call_pc >= watched_rng &&
-                                     call_pc < watched_rng + 0x4000u;
-    const bool enters_startup_constructor = startup_entry != 0 && call_pc == startup_entry;
-    // The Exient GL draw JNI callback enters the app tick loop. The generic
-    // first-call probe is consumed by constructors long before this callback,
-    // so trace this exact entry independently and only once. Runtime guest
-    // address is stable for the currently loaded libABK image.
-    static std::atomic<bool> draw_frame_trace_used{false};
-    const bool trace_draw_frame = fn == 0x01bdb340u &&
-        !draw_frame_trace_used.exchange(true, std::memory_order_acq_rel);
-    if (trace_draw_frame) {
-        bridge_log("DRAW FRAME STEP BEGIN: fn=0x%08x pc=0x%08x lr=0x%08x cpsr=0x%08x budget=4096",
-                   fn, R[15], R[14], c.jit->Cpsr());
-        uint32_t steps = 0;
-        while (!c.returned && steps < 4096u) {
-            const uint32_t before_pc = R[15];
-            const uint32_t before_cpsr = c.jit->Cpsr();
-            const bool thumb = (before_cpsr & 0x20u) != 0;
-            uint32_t instruction = 0;
-            if (thumb) {
-                uint16_t halfword = 0;
-                memcpy(&halfword, arena::base + (before_pc & ~1u), sizeof halfword);
-                instruction = halfword;
-            } else {
-                memcpy(&instruction, arena::base + (before_pc & ~3u), sizeof instruction);
-            }
-            c.jit->Step();
-            ++steps;
-            if (steps <= 24u || (steps % 64u) == 0u || c.returned) {
-                bridge_log("DRAW FRAME STEP: n=%u pc=0x%08x insn=0x%08x next=0x%08x cpsr=0x%08x r0=%08x r1=%08x r2=%08x r3=%08x",
-                           steps, before_pc, instruction, R[15], c.jit->Cpsr(),
-                           R[0], R[1], R[2], R[3]);
-            }
-        }
-        bridge_log("DRAW FRAME STEP FINAL: steps=%u returned=%d pc=0x%08x cpsr=0x%08x r0=%08x r1=%08x r2=%08x r3=%08x",
-                   steps, c.returned ? 1 : 0, R[15], c.jit->Cpsr(),
-                   R[0], R[1], R[2], R[3]);
-        if (!c.returned && steps == 4096u) {
-            bridge_log("DRAW FRAME STEP LIMIT: resuming normal Dynarmic execution at pc=0x%08x",
-                       R[15]);
-            c.jit->Run();
-        }
-        bridge_log("DRAW FRAME STEP END: returned=%d pc=0x%08x",
-                   c.returned ? 1 : 0, R[15]);
-    } else if (g_crypto_watch_active.load(std::memory_order_relaxed) &&
-        (enters_rng_directly || enters_startup_constructor)) {
-        // Step the outer NSS/FIPS constructor as well as direct RNG calls.
-        // The constructor can branch into RNG code without a new host call.
-        bridge_log("CRYPTO STEP BEGIN: fn=0x%08x rng=0x%08x rng_offset=0x%x startup_entry=0x%08x outer=%d",
-                   call_pc, watched_rng, watched_rng ? call_pc - watched_rng : 0,
-                   startup_entry, enters_startup_constructor ? 1 : 0);
-        uint32_t steps = 0;
-        uint32_t trace_logs = 0;
-        while (!c.returned && steps < 50000u) {
-            const uint32_t before_pc = R[15];
-            const uint32_t before_cpsr = c.jit->Cpsr();
-            const bool thumb = (before_cpsr & 0x20u) != 0;
-            uint32_t instruction = 0;
-            if (thumb) {
-                uint16_t halfword = 0;
-                memcpy(&halfword, arena::base + (before_pc & ~1u), sizeof halfword);
-                instruction = halfword;
-            } else {
-                memcpy(&instruction, arena::base + (before_pc & ~3u), sizeof instruction);
-            }
-            c.jit->Step();
-            ++steps;
-            const bool in_rng_hash = before_pc >= watched_rng + 0x12e0u &&
-                                     before_pc < watched_rng + 0x1800u;
-            const bool in_sha256 = before_pc >= watched_rng + 0x2c148u &&
-                                   before_pc < watched_rng + 0x2c500u;
-            if ((in_rng_hash || in_sha256) && trace_logs < 700u) {
-                const auto& sr = c.jit->Regs();
-                bridge_log("CRYPTO STEP: n=%u pc=0x%08x insn=0x%08x next=0x%08x cpsr=0x%08x",
-                           steps, before_pc, instruction, sr[15], c.jit->Cpsr());
-                bridge_log("CRYPTO STEP REG: r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x r6=%08x r7=%08x",
-                           sr[0], sr[1], sr[2], sr[3], sr[4], sr[5], sr[6], sr[7]);
-                bridge_log("CRYPTO STEP REG: r8=%08x r9=%08x r10=%08x r11=%08x r12=%08x sp=%08x lr=%08x",
-                           sr[8], sr[9], sr[10], sr[11], sr[12], sr[13], sr[14]);
-                ++trace_logs;
-            }
-        }
-        bridge_log("CRYPTO STEP FINAL: steps=%u returned=%d pc=0x%08x cpsr=0x%08x",
-                   steps, c.returned ? 1 : 0, R[15], c.jit->Cpsr());
-        bridge_log("CRYPTO STEP FINAL REG: r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x r6=%08x r7=%08x",
-                   R[0], R[1], R[2], R[3], R[4], R[5], R[6], R[7]);
-        bridge_log("CRYPTO STEP FINAL REG: r8=%08x r9=%08x r10=%08x r11=%08x r12=%08x sp=%08x lr=%08x",
-                   R[8], R[9], R[10], R[11], R[12], R[13], R[14]);
-        if (!c.returned && steps == 50000u) {
-            // Do not turn a diagnostic step budget into an artificial crash.
-            // Resume normal Dynarmic execution if the whole constructor is
-            // longer than the bounded single-step window.
-            bridge_log("CRYPTO STEP LIMIT: reached %u instructions at pc=0x%08x; resuming JIT",
-                       steps, R[15]);
-            c.jit->Run();
-        }
-        bridge_log("CRYPTO STEP END: steps=%u returned=%d pc=0x%08x",
-                   steps, c.returned ? 1 : 0, R[15]);
-    } else {
-        // Probe the first few guest calls one instruction at a time. This
-        // distinguishes a Dynarmic JIT/run-loop stall from a bad guest entry
-        // or return trampoline without changing the guest register state.
-        static std::atomic<uint32_t> first_call_probe{0};
-        const uint32_t probe_id = first_call_probe.fetch_add(1, std::memory_order_relaxed);
-        if (probe_id < 8) {
-            bridge_log("JNI CPU PROBE BEGIN: call=%u fn=0x%08x pc=0x%08x lr=0x%08x cpsr=0x%08x",
-                       probe_id + 1, fn, R[15], R[14], c.jit->Cpsr());
-            for (uint32_t step = 0; step < 4 && !c.returned; ++step) {
-                const uint32_t pc_before = R[15];
-                const uint32_t cpsr_before = c.jit->Cpsr();
-                c.jit->Step();
-                bridge_log("JNI CPU PROBE STEP: call=%u step=%u pc=0x%08x next=0x%08x lr=0x%08x r0=0x%08x cpsr=0x%08x returned=%d",
-                           probe_id + 1, step + 1, pc_before, R[15], R[14], R[0],
-                           c.jit->Cpsr(), c.returned ? 1 : 0);
-            }
-            bridge_log("JNI CPU PROBE END: call=%u pc=0x%08x returned=%d",
-                       probe_id + 1, R[15], c.returned ? 1 : 0);
-        }
-        if (!c.returned) c.jit->Run();
-    }
+    c.jit->Run();
     --t.depth;
     if (!c.returned) dump_and_die(c.jit.get(), "guest call halted without returning");
     c.jit->ClearHalt(Dynarmic::HaltReason::UserDefined1);
@@ -533,8 +303,6 @@ uint64_t call(uint32_t fn, const std::vector<uint32_t>& words) {
 }
 
 uint32_t thread_tls() { return state().tls; }
-uint32_t thread_stack_base() { return state().stack_top - kStackSize; }
-uint32_t thread_stack_size() { return kStackSize; }
 uint32_t thread_errno_addr() { return state().tls + 8; }  // TLS_SLOT_ERRNO
 void set_guest_errno(int e) { *arena::hp<int32_t>(thread_errno_addr()) = e; }
 

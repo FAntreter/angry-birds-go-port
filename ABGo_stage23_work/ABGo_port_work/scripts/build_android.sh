@@ -11,7 +11,6 @@ BUILD="${ABGO_BUILD_DIR:-$ROOT/build-android-arm64}"
 cmake -S "$ROOT" -B "$BUILD" -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
   -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-23 \
-  -DCMAKE_BUILD_TYPE=Release -DDYNARMIC_SRC="$DYN" \
-  -DBoost_INCLUDE_DIR=/usr/include -DBoost_NO_BOOST_CMAKE=ON
+  -DCMAKE_BUILD_TYPE=Release -DDYNARMIC_SRC="$DYN"
 cmake --build "$BUILD" --parallel "${BUILD_JOBS:-2}"
 echo "Bridge compilation completed. This is a shared library, not an installable APK."

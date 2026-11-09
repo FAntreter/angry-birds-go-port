@@ -4,88 +4,20 @@
 #include <atomic>
 #include <cstdarg>
 #include <cstdlib>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <unistd.h>
 #include <mutex>
-#include <signal.h>
-#include <sys/types.h>
 #include <unordered_map>
 #include <vector>
 
 #include "elf32.h"
 
-namespace {
-constexpr const char* kCrashLog = "/sdcard/Android/data/com.rovio.angrybirdsgo/files/abgo_bridge_crash.txt";
-void append_crash_line(const char* line) {
-    mkdir("/sdcard/Android", 0770);
-    mkdir("/sdcard/Android/data", 0770);
-    mkdir("/sdcard/Android/data/com.rovio.angrybirdsgo", 0770);
-    mkdir("/sdcard/Android/data/com.rovio.angrybirdsgo/files", 0770);
-    // Keep the app-private copy, and also try a user-visible Downloads copy.
-    // The original game targets API 26, so legacy shared-storage access may be
-    // available on devices that still honor the app's target SDK.
-    const char* paths[] = {
-        kCrashLog,
-        "/data/user/0/com.rovio.angrybirdsgo/files/abgo_bridge_crash.txt",
-        "/data/data/com.rovio.angrybirdsgo/files/abgo_bridge_crash.txt",
-        "/sdcard/Download/abgo_bridge_crash.txt",
-        "/storage/emulated/0/Download/abgo_bridge_crash.txt"
-    };
-    for (const char* path : paths) {
-        int fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0660);
-        if (fd < 0) continue;
-        size_t n = strlen(line);
-        const char* p = line;
-        while (n) { ssize_t w = write(fd, p, n); if (w <= 0) break; p += w; n -= static_cast<size_t>(w); }
-        write(fd, "\n", 1); fsync(fd); close(fd);
-    }
-}
-}
-namespace {
-void write_signal_number(int fd, int sig) {
-    char digits[16]; size_t n = 0; unsigned int v = static_cast<unsigned int>(sig);
-    do { digits[n++] = static_cast<char>('0' + (v % 10)); v /= 10; } while (v && n < sizeof digits);
-    while (n) { char c = digits[--n]; (void)write(fd, &c, 1); }
-}
-void crash_signal_handler(int sig, siginfo_t*, void*) {
-    static const char prefix[] = "FATAL SIGNAL: ";
-    const char* paths[] = { kCrashLog, "/sdcard/Download/abgo_bridge_crash.txt",
-                            "/storage/emulated/0/Download/abgo_bridge_crash.txt" };
-    for (const char* path : paths) {
-        int fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0660);
-        if (fd < 0) continue;
-        (void)write(fd, prefix, sizeof(prefix) - 1);
-        write_signal_number(fd, sig);
-        (void)write(fd, "\n", 1);
-        (void)close(fd);
-        break;
-    }
-    struct sigaction action{}; action.sa_handler = SIG_DFL; sigemptyset(&action.sa_mask);
-    (void)sigaction(sig, &action, nullptr);
-    (void)kill(getpid(), sig);
-    _exit(128 + sig);
-}
-}
-void install_crash_handlers() {
-    append_crash_line("=== Angry Birds Go bridge session ===");
-    struct sigaction action{}; action.sa_sigaction = crash_signal_handler;
-    sigemptyset(&action.sa_mask); action.sa_flags = SA_SIGINFO | SA_RESETHAND;
-    const int signals[] = { SIGABRT, SIGBUS, SIGFPE, SIGILL, SIGSEGV };
-    for (int sig : signals) {
-        if (sigaction(sig, &action, nullptr) != 0)
-            bridge_log("WARNING: could not install crash handler for signal %d", sig);
-    }
-    bridge_log("native crash handlers installed (SIGABRT/SIGBUS/SIGFPE/SIGILL/SIGSEGV)");
-}
-void bridge_log(const char* fmt, ...) {
-    char buf[1024]; va_list ap; va_start(ap, fmt); vsnprintf(buf, sizeof buf, fmt, ap); va_end(ap);
-    __android_log_print(ANDROID_LOG_INFO, ABSW_TAG, "%s", buf); append_crash_line(buf);
-}
 void fatal(const char* fmt, ...) {
-    char buf[1024]; va_list ap; va_start(ap, fmt); vsnprintf(buf, sizeof buf, fmt, ap); va_end(ap);
+    char buf[1024];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof buf, fmt, ap);
+    va_end(ap);
     __android_log_print(ANDROID_LOG_FATAL, ABSW_TAG, "FATAL: %s", buf);
-    char line[1100]; snprintf(line, sizeof line, "FATAL: %s", buf); append_crash_line(line); abort();
+    abort();
 }
 
 namespace hle {
@@ -159,10 +91,6 @@ void dispatch(uint32_t idx, cpu::Ctx& c) {
 
 void init() {
     register_libc();
-    const uint32_t getgid_addr = resolve("getgid");
-    bridge_log("HLE libc registration check: getgid=%s (0x%08x)",
-               getgid_addr ? "REGISTERED" : "MISSING", getgid_addr);
-    if (!getgid_addr) fatal("HLE initialization failed to register libc getgid");
     register_stdio();
     register_pthread();
     register_gles();

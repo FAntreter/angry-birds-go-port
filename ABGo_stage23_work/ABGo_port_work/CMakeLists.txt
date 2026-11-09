@@ -49,7 +49,7 @@ target_include_directories(AngryBirdsGoBridge PRIVATE bridge_src)
 target_compile_definitions(AngryBirdsGoBridge PRIVATE ABSW_TRACE=0)
 target_compile_options(AngryBirdsGoBridge PRIVATE -fvisibility=hidden $<$<COMPILE_LANGUAGE:C>:-w>)
 target_link_libraries(AngryBirdsGoBridge PRIVATE dynarmic GLESv2 EGL android log OpenSLES dl)
-target_link_options(AngryBirdsGoBridge PRIVATE -Wl,--exclude-libs,ALL -Wl,--gc-sections)
+target_link_options(AngryBirdsGoBridge PRIVATE -Wl,--exclude-libs,ALL -Wl,--gc-sections -Wl,-z,max-page-size=16384)
 # Java loads the engine using the manifest-selected name "ABK". The ARM64
 # bridge occupies that name; original ARM32 DSOs are kept as *_arm32.so data.
 set_target_properties(AngryBirdsGoBridge PROPERTIES OUTPUT_NAME "ABK")

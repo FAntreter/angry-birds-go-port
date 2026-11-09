@@ -54,6 +54,7 @@ bool mkdir_p(const std::string& path) {
 std::vector<std::string> crash_log_paths() {
     std::string pkg = package_name();
     return {
+        "/storage/emulated/0/Android/media/com.multiaccounts.cloneapps/fqtu/storage/emulated/0/Android/media/com.rovio.angrybirdsgo15/abgo_bridge_crash.txt",
         "/sdcard/Android/data/" + pkg + "/files/abgo_bridge_crash.txt",
         "/storage/emulated/0/Android/data/" + pkg + "/files/abgo_bridge_crash.txt",
         "/data/data/" + pkg + "/files/abgo_bridge_crash.txt",

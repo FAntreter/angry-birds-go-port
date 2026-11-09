@@ -6,34 +6,55 @@
 #include <cstdlib>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 #include <mutex>
 #include <signal.h>
-#include <sys/types.h>
 #include <unordered_map>
 #include <vector>
+#include <string>
+#include <cstdio>
 
 #include "elf32.h"
 
 namespace {
-constexpr const char* kCrashLog = "/sdcard/Android/data/com.rovio.angrybirdsgo/files/abgo_bridge_crash.txt";
-void append_crash_line(const char* line) {
-    mkdir("/sdcard/Android", 0770);
-    mkdir("/sdcard/Android/data", 0770);
-    mkdir("/sdcard/Android/data/com.rovio.angrybirdsgo", 0770);
-    mkdir("/sdcard/Android/data/com.rovio.angrybirdsgo/files", 0770);
-    // Keep the app-private copy, and also try a user-visible Downloads copy.
-    // The original game targets API 26, so legacy shared-storage access may be
-    // available on devices that still honor the app's target SDK.
-    const char* paths[] = {
-        kCrashLog,
-        "/data/user/0/com.rovio.angrybirdsgo/files/abgo_bridge_crash.txt",
-        "/data/data/com.rovio.angrybirdsgo/files/abgo_bridge_crash.txt",
+// Best effort: on Android, /proc/self/cmdline argv[0] is usually the package name.
+std::string package_name() {
+    char buf[256] = {};
+    FILE* f = fopen("/proc/self/cmdline", "r");
+    if (f) {
+        size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+        fclose(f);
+        for (size_t i = 0; i < n; ++i)
+            if (buf[i] == '\0') { buf[i] = 0; break; }
+    }
+    std::string p = buf;
+    return p.empty() ? std::string("com.rovio.angrybirdsgo15") : p;
+}
+
+std::vector<std::string> crash_log_paths() {
+    std::string pkg = package_name();
+    return {
+        "/sdcard/Android/data/" + pkg + "/files/abgo_bridge_crash.txt",
+        "/storage/emulated/0/Android/data/" + pkg + "/files/abgo_bridge_crash.txt",
         "/sdcard/Download/abgo_bridge_crash.txt",
-        "/storage/emulated/0/Download/abgo_bridge_crash.txt"
+        "/storage/emulated/0/Download/abgo_bridge_crash.txt",
+        "/data/user/0/" + pkg + "/files/abgo_bridge_crash.txt",
+        "/data/data/" + pkg + "/files/abgo_bridge_crash.txt",
     };
-    for (const char* path : paths) {
-        int fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0660);
+}
+
+void append_crash_line(const char* line) {
+    for (const std::string& path : crash_log_paths()) {
+        // make parent dirs if we can (best effort)
+        size_t slash = path.rfind('/');
+        if (slash != std::string::npos) {
+            std::string parent = path.substr(0, slash);
+            char tmp[512];
+            snprintf(tmp, sizeof tmp, "mkdir -p %s", parent.c_str());
+            system(tmp);
+        }
+        int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0660);
         if (fd < 0) continue;
         size_t n = strlen(line);
         const char* p = line;

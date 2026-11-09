@@ -71,16 +71,13 @@ void write_signal_number(int fd, int sig) {
 }
 void crash_signal_handler(int sig, siginfo_t*, void*) {
     static const char prefix[] = "FATAL SIGNAL: ";
-    const char* paths[] = { kCrashLog, "/sdcard/Download/abgo_bridge_crash.txt",
-                            "/storage/emulated/0/Download/abgo_bridge_crash.txt" };
-    for (const char* path : paths) {
-        int fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0660);
-        if (fd < 0) continue;
+    const char* path = crash_log_paths().front().c_str();
+    int fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0660);
+    if (fd >= 0) {
         (void)write(fd, prefix, sizeof(prefix) - 1);
         write_signal_number(fd, sig);
         (void)write(fd, "\n", 1);
         (void)close(fd);
-        break;
     }
     struct sigaction action{}; action.sa_handler = SIG_DFL; sigemptyset(&action.sa_mask);
     (void)sigaction(sig, &action, nullptr);

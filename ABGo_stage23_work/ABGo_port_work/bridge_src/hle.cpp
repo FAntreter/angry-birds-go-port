@@ -14,6 +14,7 @@
 #include <vector>
 #include <string>
 #include <cstdio>
+#include <cerrno>
 
 #include "elf32.h"
 
@@ -32,28 +33,40 @@ std::string package_name() {
     return p.empty() ? std::string("com.rovio.angrybirdsgo15") : p;
 }
 
+// Recursive mkdir without spawning a shell (may be restricted on some builds).
+bool mkdir_p(const std::string& path) {
+    size_t pos = 0;
+    std::string acc;
+    if (!path.empty() && path[0] == '/') acc = "/";
+    while ((pos = path.find('/', pos)) != std::string::npos) {
+        acc += path.substr(acc.size(), pos - acc.size() + 1);
+        ++pos;
+        if (mkdir(acc.c_str(), 0770) != 0 && errno != EEXIST) return false;
+    }
+    if (mkdir(path.c_str(), 0770) != 0 && errno != EEXIST) return false;
+    return true;
+}
+
+// Permission-free locations first: app-internal dirs need no storage permission,
+// then the app's own external dir (also permission-free on modern Android),
+// then Downloads as a user-visible fallback.
 std::vector<std::string> crash_log_paths() {
     std::string pkg = package_name();
     return {
+        "/data/data/" + pkg + "/files/abgo_bridge_crash.txt",
+        "/data/user/0/" + pkg + "/files/abgo_bridge_crash.txt",
         "/sdcard/Android/data/" + pkg + "/files/abgo_bridge_crash.txt",
         "/storage/emulated/0/Android/data/" + pkg + "/files/abgo_bridge_crash.txt",
         "/sdcard/Download/abgo_bridge_crash.txt",
         "/storage/emulated/0/Download/abgo_bridge_crash.txt",
-        "/data/user/0/" + pkg + "/files/abgo_bridge_crash.txt",
-        "/data/data/" + pkg + "/files/abgo_bridge_crash.txt",
     };
 }
 
 void append_crash_line(const char* line) {
     for (const std::string& path : crash_log_paths()) {
-        // make parent dirs if we can (best effort)
         size_t slash = path.rfind('/');
-        if (slash != std::string::npos) {
-            std::string parent = path.substr(0, slash);
-            char tmp[512];
-            snprintf(tmp, sizeof tmp, "mkdir -p %s", parent.c_str());
-            system(tmp);
-        }
+        if (slash != std::string::npos)
+            mkdir_p(path.substr(0, slash));
         int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0660);
         if (fd < 0) continue;
         size_t n = strlen(line);
